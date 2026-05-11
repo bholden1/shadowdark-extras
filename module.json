@@ -1,7 +1,7 @@
 {
   "id": "shadowdark-extras",
   "title": "Shadowdark Extras",
-  "version": "6.87",
+  "version": "6.88",
   "compatibility": {
     "minimum": "13",
     "verified": "13"
@@ -24,16 +24,6 @@
       }
     ],
     "requires": [
-      {
-        "id": "item-piles",
-        "type": "module",
-        "compatibility": {}
-      },
-      {
-        "id": "shadowdark-item-piles",
-        "type": "module",
-        "compatibility": {}
-      },
       {
         "id": "socketlib",
         "type": "module",

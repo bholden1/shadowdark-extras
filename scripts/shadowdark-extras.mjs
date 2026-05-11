@@ -7,6 +7,7 @@ import PartySheetSD, { syncPartyTokenLight, getPartiesContainingActor } from "./
 import TradeWindowSD, { initializeTradeSocket, showTradeDialog, ensureTradeJournal } from "./TradeWindowSD.mjs";
 import { CombatSettingsApp, registerCombatSettings, injectDamageCard, setupCombatSocket, setupScrollingCombatText, setupSummonExpiryHook, trackSummonedTokensForExpiry, spawnSummonedCreatures } from "./CombatSettingsSD.mjs";
 import { EffectsSettingsApp, registerEffectsSettings } from "./EffectsSettingsSD.mjs";
+import { patchArmorActiveEffects } from "./ArmorAEPatchSD.mjs";
 import { HpWavesSettingsApp, registerHpWavesSettings, getHpWaveColor, isHpWavesEnabled } from "./HpWavesSettingsSD.mjs";
 import { TravelActivitiesSettingsApp, registerTravelActivitiesSettings, getTravelActivities } from "./TravelActivitiesSettingsSD.mjs";
 import { TravelSpeedsSettingsApp, registerTravelSpeedsSettings, getTravelSpeeds } from "./TravelSpeedsSettingsSD.mjs";
@@ -112,6 +113,9 @@ Hooks.once("init", () => {
 	} catch (err) {
 		console.error("Shadowdark Extras | Failed to register GSAP PixiPlugin:", err);
 	}
+
+	// Backport Shadowdark 4.0 fix: suppress AEs from stashed / unequipped / unidentified items
+	patchArmorActiveEffects();
 
 	// Monkeypatch: Fix system's removeTorchTimer error when chat messages don't have .light-source element
 	// The system hook at hooks.mjs:168 calls html.querySelector(".light-source").remove() without null checking
