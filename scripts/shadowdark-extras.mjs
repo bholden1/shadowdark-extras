@@ -19288,7 +19288,6 @@ Hooks.once("ready", () => {
 			await ChatMessage.create({
 				content: chatContent,
 				speaker: ChatMessage.getSpeaker({ actor: item.actor }),
-				type: CONST.CHAT_MESSAGE_STYLES.OTHER
 			});
 
 			// Route reveal dialog back to the originating player
@@ -20014,6 +20013,46 @@ Hooks.once("ready", () => {
 		console.log(`${MODULE_ID} | Patched ItemSD.displayCard for NPC Feature macro and activity execution`);
 
 	}, 100);
+});
+
+// Fix shadowdark.chat._renderChatMessage for Foundry v13+ compatibility
+// In Foundry v13+, CONST.CHAT_MESSAGE_STYLES.OTHER (= 0) is no longer a valid ChatMessage type.
+// The schema coerces numeric 0 to the string "0" which is not a registered sub-type, causing
+// DataModelValidationError. This patch replaces the method to omit the type field when the
+// legacy numeric value would be used, letting Foundry fall back to its default type.
+Hooks.once("ready", () => {
+	setTimeout(() => {
+		if (!shadowdark?.chat?._renderChatMessage) {
+			console.warn(`${MODULE_ID} | shadowdark.chat._renderChatMessage not found, cannot patch for v13+ compat`);
+			return;
+		}
+
+		shadowdark.chat._renderChatMessage = async function(actor, data, template, mode) {
+			const html = await foundry.applications.handlebars.renderTemplate(template, data.templateData);
+
+			if (!mode) mode = game.settings.get("core", "rollMode");
+
+			const chatData = {
+				content: html,
+				flags: { "core.canPopout": true },
+				flavor: data.flavor ?? undefined,
+				rollMode: mode,
+				speaker: ChatMessage.getSpeaker({ actor }),
+				user: game.user.id,
+			};
+
+			// Only set type when it is a valid string sub-type; numeric legacy constants
+			// (CONST.CHAT_MESSAGE_STYLES.OTHER = 0 etc.) are not valid in Foundry v13+.
+			if (data.type && typeof data.type === "string") {
+				chatData.type = data.type;
+			}
+
+			ChatMessage.applyRollMode(chatData, mode);
+			await ChatMessage.create(chatData);
+		};
+
+		console.log(`${MODULE_ID} | Patched shadowdark.chat._renderChatMessage for Foundry v13+ type compatibility`);
+	}, 150);
 });
 
 //console.log(`${MODULE_ID} | Module loaded - NPC Feature item macro hooks registered`);

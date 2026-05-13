@@ -556,10 +556,6 @@ export function isFogEffectsEnabled() {
 	return game.settings.get(MODULE_ID, "enableFogEffects");
 }
 
-export function isHexPreviewEnabled() {
-	return game.settings.get(MODULE_ID, "hexFog.enablePreview");
-}
-
 export function getActiveHexFogEffect(sceneId) {
 	if (!isFogEffectsEnabled()) return null;
 	if (!sceneId) return null;
@@ -585,20 +581,11 @@ export function getAvailableHexFogEffects() {
 	}));
 }
 
-export function refreshHexFog() {
-	if (!canvas?.scene || !canvas.grid?.isHexagonal) return;
-	if (!enabled || !fog) return;
-	_drawFog();
-	canvas.perception.update({ refreshVision: true });
-}
-
 export function initHexFog() {
 	Hooks.on("canvasReady", _onCanvasReady);
 	Hooks.on("canvasTearDown", _onCanvasTearDown);
 	Hooks.on("updateScene", _onUpdateScene);
 	Hooks.on("updateToken", _onUpdateToken);
-	Hooks.on("createToken", _onTokenPresenceChange);
-	Hooks.on("deleteToken", _onTokenPresenceChange);
 
 	Hooks.on("updateJournalEntry", (journal) => {
 		if (journal.name !== HEX_JOURNAL_NAME) return;
@@ -662,13 +649,22 @@ function _onUpdateScene(scene, changes) {
 function _onUpdateToken(tokenDoc, changes) {
 	if (!enabled) return;
 	if (!canvas.grid?.isHexagonal) return;
-	if (tokenDoc.parent?.id !== canvas.scene?.id) return;
 
 	const hasMove = ("x" in changes) || ("y" in changes);
 	if (!hasMove) return;
 
-	const origin = _getTokenCenterPoint(tokenDoc, true);
-	const destination = _getTokenCenterPoint(tokenDoc, false);
+	const tw = tokenDoc.width * canvas.grid.sizeX;
+	const th = tokenDoc.height * canvas.grid.sizeY;
+	const halfW = tw / 2;
+	const halfH = th / 2;
+
+	const oldX = tokenDoc._source?.x ?? tokenDoc.x;
+	const oldY = tokenDoc._source?.y ?? tokenDoc.y;
+	const newX = tokenDoc.x;
+	const newY = tokenDoc.y;
+
+	const origin = { x: oldX + halfW, y: oldY + halfH };
+	const destination = { x: newX + halfW, y: newY + halfH };
 
 	// Get all cells along the movement path
 	const pathCells = canvas.grid.getDirectPath([origin, destination]);
@@ -677,124 +673,61 @@ function _onUpdateToken(tokenDoc, changes) {
 	const originOffset = canvas.grid.getOffset(origin);
 	const originKey = `${originOffset.i}_${originOffset.j}`;
 
-	const defaultRadius = _getDefaultRevealRadius();
+	// Default reveal radius from module settings
+	const defaultRadius = game.settings.get(MODULE_ID, "hexFog.defaultRevealRadius") ?? 1;
+
+	// Load hex tooltip data for per-hex radius overrides
 	const hexData = _getHexSceneData(canvas.scene.id);
-	const { revealedKeys: toReveal, rollTableCells } = _collectRevealData(pathCells, {
-		defaultRadius,
-		hexData,
-		rollTableOriginKey: originKey
-	});
+
+	// Collect cells to reveal: path cells + neighbors based on radius
+	const toReveal = new Set();
+	const rollTableCells = [];  // track cells with roll tables
+
+	for (const cell of pathCells) {
+		const cellKey = `${cell.i}-${cell.j}`;
+		toReveal.add(cellKey);
+
+		// Check per-hex radius override (tooltip uses i_j format)
+		const tooltipKey = `${cell.i}_${cell.j}`;
+		const hexRecord = hexData?.[tooltipKey];
+		const perHexRadius = hexRecord?.revealRadius ?? -1;
+		const radius = perHexRadius >= 0 ? perHexRadius : defaultRadius;
+
+		if (radius > 0) {
+			_getNeighborsAtDepth(cell, radius, toReveal);
+		}
+
+		// Reveal Cells: extra cells listed in hex data
+		if (hexRecord?.revealCells) {
+			_parseRevealCells(hexRecord.revealCells, toReveal);
+		}
+
+		// Collect cells that have roll tables (only cells being entered, not the origin)
+		if (hexRecord?.rollTable && tooltipKey !== originKey) {
+			rollTableCells.push({ tooltipKey, hexRecord });
+		}
+	}
 
 	const scene = canvas.scene;
 	const existing = scene.getFlag(MODULE_ID, "hexFogRevealed") || {};
-	const existingPreview = scene.getFlag(MODULE_ID, "hexFogPreviewed") || {};
-	const exploredKeys = _getExploredHexKeys(scene.id);
 	let changed = false;
-	let previewChanged = false;
 	const updated = { ...existing };
-	const updatedPreview = { ...existingPreview };
 	for (const key of toReveal) {
 		if (!updated[key]) {
 			updated[key] = true;
 			changed = true;
 		}
-		if (updatedPreview[key]) {
-			delete updatedPreview[key];
-			previewChanged = true;
-		}
 	}
 
-	if (isHexPreviewEnabled()) {
-		const previewKeys = _collectPreviewRingKeys(toReveal);
-		for (const key of previewKeys) {
-			if (updated[key] || exploredKeys.has(key)) continue;
-			if (!updatedPreview[key]) {
-				updatedPreview[key] = true;
-				previewChanged = true;
-			}
-		}
+	if (changed && game.user.isGM) {
+		scene.setFlag(MODULE_ID, "hexFogRevealed", updated);
+		// updateScene hook will trigger _drawFog for all clients
 	}
-
-	if ((changed || previewChanged) && game.user.isGM) {
-		if (previewChanged) scene.setFlag(MODULE_ID, "hexFogPreviewed", updatedPreview);
-		if (changed) scene.setFlag(MODULE_ID, "hexFogRevealed", updated);
-	}
-
-	_drawFog();
-	canvas.perception.update({ refreshVision: true });
 
 	// Roll tables for entered cells (GM only)
 	if (game.user.isGM && rollTableCells.length > 0) {
 		_processRollTables(scene, rollTableCells);
 	}
-}
-
-function _onTokenPresenceChange(tokenDoc) {
-	if (!enabled) return;
-	if (!canvas.grid?.isHexagonal) return;
-	if (tokenDoc.parent?.id !== canvas.scene?.id) return;
-	_drawFog();
-	canvas.perception.update({ refreshVision: true });
-}
-
-function _getDefaultRevealRadius() {
-	return game.settings.get(MODULE_ID, "hexFog.defaultRevealRadius") ?? 1;
-}
-
-function _getTokenCenterPoint(tokenDoc, useSource = false) {
-	const source = useSource ? (tokenDoc._source ?? tokenDoc) : tokenDoc;
-	const tw = (source.width ?? tokenDoc.width) * canvas.grid.sizeX;
-	const th = (source.height ?? tokenDoc.height) * canvas.grid.sizeY;
-	const x = source.x ?? tokenDoc.x;
-	const y = source.y ?? tokenDoc.y;
-	return { x: x + (tw / 2), y: y + (th / 2) };
-}
-
-function _collectRevealData(cells, { defaultRadius, hexData, rollTableOriginKey = null } = {}) {
-	const revealedKeys = new Set();
-	const rollTableCells = [];
-	const radiusDefault = defaultRadius ?? _getDefaultRevealRadius();
-	const sceneHexData = hexData ?? _getHexSceneData(canvas.scene.id);
-
-	for (const cell of cells) {
-		const cellKey = `${cell.i}-${cell.j}`;
-		revealedKeys.add(cellKey);
-
-		const tooltipKey = `${cell.i}_${cell.j}`;
-		const hexRecord = sceneHexData?.[tooltipKey];
-		const perHexRadius = hexRecord?.revealRadius ?? -1;
-		const radius = perHexRadius >= 0 ? perHexRadius : radiusDefault;
-
-		if (radius > 0) {
-			_getNeighborsAtDepth(cell, radius, revealedKeys);
-		}
-
-		if (hexRecord?.revealCells) {
-			_parseRevealCells(hexRecord.revealCells, revealedKeys);
-		}
-
-		if (hexRecord?.rollTable && tooltipKey !== rollTableOriginKey) {
-			rollTableCells.push({ tooltipKey, hexRecord });
-		}
-	}
-
-	return { revealedKeys, rollTableCells };
-}
-
-function _collectPreviewRingKeys(revealedKeys) {
-	const previewKeys = new Set();
-
-	for (const key of revealedKeys) {
-		const [i, j] = key.split("-").map(Number);
-		if (Number.isNaN(i) || Number.isNaN(j)) continue;
-		_getNeighborsAtDepth({ i, j }, 1, previewKeys);
-	}
-
-	for (const key of revealedKeys) {
-		previewKeys.delete(key);
-	}
-
-	return previewKeys;
 }
 
 /**
@@ -1027,14 +960,11 @@ function _onPaintUp() {
 	// Batch-save all changes to the scene flag
 	const scene = canvas.scene;
 	const revealed = { ...(scene.getFlag(MODULE_ID, "hexFogRevealed") || {}) };
-	const previewed = { ...(scene.getFlag(MODULE_ID, "hexFogPreviewed") || {}) };
 	for (const [key, val] of Object.entries(_paintOverlay)) {
 		if (val) revealed[key] = true;
 		else revealed[key] = false;
-		delete previewed[key];
 	}
 	_paintOverlay = {};
-	scene.setFlag(MODULE_ID, "hexFogPreviewed", previewed);
 	scene.setFlag(MODULE_ID, "hexFogRevealed", revealed);
 }
 
@@ -1104,9 +1034,7 @@ function _drawFog() {
 	const scene = canvas.scene;
 	const revealed = scene.getFlag(MODULE_ID, "hexFogRevealed") || {};
 	const exploredKeys = _getExploredHexKeys(scene.id);
-	const previewKeys = _getStoredHexPreviewKeys(scene, revealed, exploredKeys);
 	const alpha = game.user.isGM ? 0.5 : 1.0;
-	const previewAlpha = alpha * 0.5;
 	const unexploredColor = scene.fog?.colors?.unexplored?.css || "#000000";
 
 	const rows = scene.dimensions.rows;
@@ -1144,7 +1072,6 @@ function _drawFog() {
 				continue;
 			}
 
-			const fillAlpha = previewKeys.has(key) ? previewAlpha : alpha;
 			const center = canvas.grid.getCenterPoint({ i, j });
 			const offsetShape = cellShape.map(p => ({
 				x: p.x + center.x,
@@ -1153,10 +1080,10 @@ function _drawFog() {
 
 			if (texMatrix) {
 				fog.lineStyle(0);
-				fog.beginTextureFill({ texture: _fogOverlayTexture, alpha: fillAlpha, matrix: texMatrix });
+				fog.beginTextureFill({ texture: _fogOverlayTexture, alpha, matrix: texMatrix });
 			} else {
-				fog.lineStyle(fillAlpha, unexploredColor, fillAlpha);
-				fog.beginFill(unexploredColor, fillAlpha);
+				fog.lineStyle(alpha, unexploredColor, alpha);
+				fog.beginFill(unexploredColor, alpha);
 			}
 			fog.drawPolygon(offsetShape);
 			fog.endFill();
@@ -1164,13 +1091,13 @@ function _drawFog() {
 	}
 
 	// ── Draw vision mask ──
-	_drawFogMask(revealed, exploredKeys, previewKeys, rows, cols, cellShape);
+	_drawFogMask(revealed, exploredKeys, rows, cols, cellShape);
 
 	// ── Update pin visibility based on fog ──
 	_updateFogPinVisibility();
 }
 
-function _drawFogMask(revealed, exploredKeys, previewKeys, rows, cols, cellShape) {
+function _drawFogMask(revealed, exploredKeys, rows, cols, cellShape) {
 	if (!fogMask) return;
 	fogMask.clear();
 	fogMask.lineStyle(0, 0x000000, 0);
@@ -1181,34 +1108,17 @@ function _drawFogMask(revealed, exploredKeys, previewKeys, rows, cols, cellShape
 			const isRevealed = (key in _paintOverlay)
 				? _paintOverlay[key]
 				: (revealed[key] || exploredKeys.has(key));
-			const isPreview = !isRevealed && previewKeys.has(key);
 			const center = canvas.grid.getCenterPoint({ i, j });
 			const offsetShape = cellShape.map(p => ({
 				x: p.x + center.x,
 				y: p.y + center.y
 			}));
 
-			const color = (isRevealed || isPreview) ? 0xffffff : 0x000000;
-			const maskAlpha = isPreview ? 0.5 : 1;
-			fogMask.beginFill(color, maskAlpha);
+			fogMask.beginFill(isRevealed ? 0xffffff : 0x000000, 1);
 			fogMask.drawPolygon(offsetShape);
 			fogMask.endFill();
 		}
 	}
-}
-
-function _getStoredHexPreviewKeys(scene, revealed, exploredKeys) {
-	const previewKeys = new Set();
-	if (!isHexPreviewEnabled()) return previewKeys;
-	const storedPreview = scene.getFlag(MODULE_ID, "hexFogPreviewed") || {};
-	for (const [key, isPreviewed] of Object.entries(storedPreview)) {
-		if (!isPreviewed) continue;
-		if (revealed[key] || exploredKeys.has(key)) continue;
-		if (_paintOverlay[key] === true) continue;
-		if (_paintOverlay[key] === false) continue;
-		previewKeys.add(key);
-	}
-	return previewKeys;
 }
 
 /**
