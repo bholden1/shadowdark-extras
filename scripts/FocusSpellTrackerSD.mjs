@@ -1448,7 +1448,9 @@ function handleDurationDamageApplyClick(message, html, context) {
 					// Use socket to ask GM to apply
 					const socket = getSocket();
 					if (socket) {
-						socket.executeAsGM("applyDamage", tokenId, damage, actorName);
+						// Use the registered applyTokenDamage handler (CombatSettingsSD).
+						// Note: the previous call site used "applyDamage" which was never registered.
+						socket.executeAsGM("applyTokenDamage", { tokenId, damage, actorName });
 					} else {
 						ui.notifications.warn("Cannot apply damage - no GM connected.");
 						btn.disabled = false;

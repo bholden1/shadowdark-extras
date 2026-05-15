@@ -14142,8 +14142,10 @@ function setupRollAttackPatches() {
 						item.availableAmmunition = function () { return [ammoItem]; };
 
 						try {
-							// Temporarily monkeypatch item.rollItem to inject bonuses
-							// TODO: Update this if ItemSD.prototype.rollItem signature changed in 4.x
+							// Temporarily monkeypatch item.rollItem to inject bonuses.
+							// Signature verified compatible with Shadowdark 4.0.x:
+							// async rollItem(parts, data, options={}) — see
+							// systems/shadowdark/src/documents/ItemSD.mjs:214.
 							const originalRollItem = item.rollItem;
 							item.rollItem = function (parts, data, options) {
 								if (!data._sdxAmmoBonusesApplied) {
