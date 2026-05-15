@@ -216,7 +216,7 @@ function buildWeaponBonusTabHtml(flags, item) {
 	});
 
 	// Build Item Macro section HTML
-	const itemMacroHtml = buildItemMacroSectionHtml(itemMacro, itemMacroModuleActive);
+	const itemMacroHtml = buildItemMacroSectionHtml(itemMacro, itemMacroCommand);
 
 	// Build critical requirements HTML
 	let criticalDiceReqsHtml = "";
@@ -800,8 +800,7 @@ function buildEffectRequirementRowHtml(req, effectIndex, reqIndex) {
  * @param {boolean} moduleActive - Whether the Item Macro module is active
  * @returns {string} - HTML string
  */
-function buildItemMacroSectionHtml(itemMacro, moduleActive) {
-	const enabled = itemMacro.enabled || false;
+function buildItemMacroSectionHtml(itemMacro, macroCommand) {
 	const runAsGm = itemMacro.runAsGm || false;
 	const triggers = itemMacro.triggers || [];
 
@@ -815,20 +814,6 @@ function buildItemMacroSectionHtml(itemMacro, moduleActive) {
 		{ value: "onEquip", label: "Run macro on equip", icon: "fa-hand-holding" },
 		{ value: "onUnequip", label: "Run macro on unequip", icon: "fa-hand" }
 	];
-
-	// If module is not active, show notice
-	if (!moduleActive) {
-		return `
-			<fieldset class="sdx-bonus-fieldset sdx-item-macro-fieldset">
-				<legend><i class="fas fa-scroll"></i> Item Macro</legend>
-				<div class="sdx-item-macro-unavailable">
-					<i class="fas fa-exclamation-triangle"></i>
-					<span>The <strong>Item Macro</strong> module is not installed or not enabled.</span>
-					<p class="hint">Install and enable the Item Macro module to attach macros to this weapon.</p>
-				</div>
-			</fieldset>
-		`;
-	}
 
 	// Build trigger checkboxes
 	const triggerCheckboxesHtml = triggerOptions.map(opt => `
@@ -844,6 +829,13 @@ function buildItemMacroSectionHtml(itemMacro, moduleActive) {
 		<fieldset class="sdx-bonus-fieldset sdx-item-macro-fieldset">
 			<legend><i class="fas fa-scroll"></i> Item Macro</legend>
 			<p class="sdx-section-hint">Configure when to execute this weapon's Item Macro during combat.</p>
+
+			<div class="sdx-macro-editor-section">
+				<label class="sdx-triggers-label">Macro Command (JavaScript):</label>
+				<textarea class="sdx-item-macro-command" 
+					placeholder="// Write your macro here... (actor, token, item, args are available)"
+					spellcheck="false">${macroCommand}</textarea>
+			</div>
 			
 			<div class="sdx-macro-gm-toggle">
 				<label class="sdx-toggle-label">
@@ -1394,6 +1386,21 @@ function activateWeaponBonusListeners(html, app, item) {
 		const itemMacro = currentFlags.itemMacro || { enabled: false, runAsGm: false, triggers: [] };
 		itemMacro.runAsGm = runAsGm;
 		await saveWeaponBonusConfig(item, { itemMacro });
+	});
+
+	// Item Macro: Command text change - debounced save
+	$tab.on('input', '.sdx-item-macro-command', function () {
+		clearTimeout(saveTimeout);
+		saveTimeout = setTimeout(async () => {
+			const command = $(this).val();
+			await item.setFlag(MODULE_ID, "macroCommand", command);
+		}, 500);
+	});
+
+	$tab.on('blur', '.sdx-item-macro-command', async function () {
+		clearTimeout(saveTimeout);
+		const command = $(this).val();
+		await item.setFlag(MODULE_ID, "macroCommand", command);
 	});
 
 	// Item Macro: Trigger checkboxes

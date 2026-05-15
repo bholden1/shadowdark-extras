@@ -51,8 +51,8 @@ export function initFocusSpellTracker() {
 	console.log("shadowdark-extras | Initializing Focus Spell Tracker");
 
 	// Hook into chat message rendering to track focus spells
-	// (We use renderChatMessage because we need to parse the HTML for actor/item IDs)
-	Hooks.on("renderChatMessage", handleChatMessageRender);
+	// (We use renderChatMessageHTML because we need to parse the HTML for actor/item IDs)
+	Hooks.on("renderChatMessageHTML", handleChatMessageRender);
 
 	// Hook into effect creation to link effects to focus spells
 	Hooks.on("createItem", handleEffectCreated);
@@ -76,13 +76,13 @@ export function initFocusSpellTracker() {
 	Hooks.on("updateCombat", handleDurationSpellCombatUpdate);
 
 	// Hook into chat message rendering to add click handlers for focus roll buttons
-	Hooks.on("renderChatMessage", handleFocusReminderChatClick);
+	Hooks.on("renderChatMessageHTML", handleFocusReminderChatClick);
 
 	// Hook into chat message rendering to add click handlers for duration damage apply buttons
-	Hooks.on("renderChatMessage", handleDurationDamageApplyClick);
+	Hooks.on("renderChatMessageHTML", handleDurationDamageApplyClick);
 
 	// Hook into chat message rendering to track wand uses
-	Hooks.on("renderChatMessage", handleWandUsesTracking);
+	Hooks.on("renderChatMessageHTML", handleWandUsesTracking);
 
 	// Hook into player sheet rendering to display wand uses next to wand names
 	Hooks.on("renderPlayerSheetSD", injectWandUsesDisplay);
@@ -102,7 +102,7 @@ function getFocusSpellSocket() {
  * Handle chat message rendering to detect spell casts
  * Extracts actor/item IDs from the chat card HTML data attributes
  */
-async function handleChatMessageRender(message, html, data) {
+async function handleChatMessageRender(message, html, context) {
 	// Only process if current user is the author to avoid duplicate processing
 	if (message.author?.id !== game.user.id) return;
 
@@ -112,9 +112,9 @@ async function handleChatMessageRender(message, html, data) {
 	if (!rollConfig) return;
 
 	// Get actor and item IDs from the chat card HTML or rollConfig
-	const chatCard = html.find('.chat-card');
-	const actorId = rollConfig.actorId || chatCard.data('actorId');
-	const itemUuid = rollConfig.itemUuid || chatCard.data('itemId'); // In v4 itemId often holds UUID
+	const chatCard = html.querySelector('.chat-card');
+	const actorId = rollConfig.actorId || chatCard?.dataset.actorId;
+	const itemUuid = rollConfig.itemUuid || chatCard?.dataset.itemId; // In v4 itemId often holds UUID
 
 	if (!actorId) return;
 
@@ -1226,38 +1226,39 @@ async function applyFocusSpellPerTurnDamage(focusSpell, targetActor, targetToken
 /**
  * Handle clicks on focus roll buttons in chat messages
  */
-function handleFocusReminderChatClick(message, html, data) {
+function handleFocusReminderChatClick(message, html, context) {
 	// Find all focus roll buttons in this message
-	const focusRollBtns = html.find(".sdx-focus-roll-btn");
+	const focusRollBtns = html.querySelectorAll(".sdx-focus-roll-btn");
 	if (focusRollBtns.length === 0) return;
 
-	focusRollBtns.on("click", async (event) => {
-		event.preventDefault();
-		event.stopPropagation();
+	focusRollBtns.forEach(btn => {
+		btn.addEventListener("click", async (event) => {
+			event.preventDefault();
+			event.stopPropagation();
 
-		const btn = event.currentTarget;
-		const actorId = btn.dataset.actorId;
-		const spellId = btn.dataset.spellId;
+			const actorId = btn.dataset.actorId;
+			const spellId = btn.dataset.spellId;
 
-		if (!actorId || !spellId) {
-			console.warn("shadowdark-extras | Focus roll button missing actorId or spellId");
-			return;
-		}
+			if (!actorId || !spellId) {
+				console.warn("shadowdark-extras | Focus roll button missing actorId or spellId");
+				return;
+			}
 
-		const actor = game.actors.get(actorId);
-		if (!actor) {
-			ui.notifications.error("Could not find the actor for this focus spell.");
-			return;
-		}
+			const actor = game.actors.get(actorId);
+			if (!actor) {
+				ui.notifications.error("Could not find the actor for this focus spell.");
+				return;
+			}
 
-		// Check if the current user owns this actor
-		if (!actor.isOwner) {
-			ui.notifications.warn("You do not own this actor.");
-			return;
-		}
+			// Check if the current user owns this actor
+			if (!actor.isOwner) {
+				ui.notifications.warn("You do not own this actor.");
+				return;
+			}
 
-		// Roll the focus check with auto-targeting
-		await rollFocusSpellWithTargets(actor, spellId);
+			// Roll the focus check with auto-targeting
+			await rollFocusSpellWithTargets(actor, spellId);
+		});
 	});
 }
 
@@ -1412,72 +1413,77 @@ async function rollFocusCheckFromCachedData(actor, focusEntry) {
 /**
  * Handle clicks on duration damage apply buttons in chat messages
  */
-function handleDurationDamageApplyClick(message, html, data) {
+function handleDurationDamageApplyClick(message, html, context) {
 	// Find all duration damage apply buttons in this message
-	const applyBtns = html.find(".sdx-duration-apply-btn");
+	const applyBtns = html.querySelectorAll(".sdx-duration-apply-btn");
 	if (applyBtns.length === 0) return;
 
-	applyBtns.on("click", async (event) => {
-		event.preventDefault();
-		event.stopPropagation();
+	applyBtns.forEach(btn => {
+		btn.addEventListener("click", async (event) => {
+			event.preventDefault();
+			event.stopPropagation();
 
-		const btn = event.currentTarget;
-		const $btn = $(btn);
+			// Disable immediately to prevent double-clicks
+			if (btn.disabled || btn.classList.contains("sdx-duration-applied")) {
+				return; // Already applied
+			}
+			btn.disabled = true;
+			const originalHtml = btn.innerHTML;
+			btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Applying...';
 
-		// Disable immediately to prevent double-clicks
-		if ($btn.prop("disabled") || $btn.hasClass("sdx-duration-applied")) {
-			return; // Already applied
-		}
-		$btn.prop("disabled", true).html('<i class="fas fa-spinner fa-spin"></i> Applying...');
+			const tokenId = btn.dataset.tokenId;
+			const damage = parseInt(btn.dataset.damage);
+			const actorName = btn.dataset.actorName;
 
-		const tokenId = btn.dataset.tokenId;
-		const damage = parseInt(btn.dataset.damage);
-		const actorName = btn.dataset.actorName;
-
-		if (!tokenId || isNaN(damage)) {
-			console.warn("shadowdark-extras | Duration apply button missing tokenId or damage");
-			$btn.prop("disabled", false).html('<i class="fas fa-heart-broken"></i> Apply Damage');
-			return;
-		}
-
-		try {
-			// Only GM can apply damage via socket or directly
-			if (!game.user.isGM) {
-				// Use socket to ask GM to apply
-				const socket = getSocket();
-				if (socket) {
-					socket.executeAsGM("applyDamage", tokenId, damage, actorName);
-				} else {
-					ui.notifications.warn("Cannot apply damage - no GM connected.");
-					$btn.prop("disabled", false).html('<i class="fas fa-heart-broken"></i> Apply Damage');
-					return;
-				}
-			} else {
-				// GM applies directly
-				const token = canvas.tokens?.get(tokenId);
-				if (!token?.actor) {
-					ui.notifications.error("Could not find the target token.");
-					$btn.prop("disabled", false).html('<i class="fas fa-heart-broken"></i> Apply Damage');
-					return;
-				}
-
-				const currentHp = token.actor.system.attributes.hp.value;
-				const newHp = Math.max(0, currentHp - damage);
-				await token.actor.update({ "system.attributes.hp.value": newHp });
+			if (!tokenId || isNaN(damage)) {
+				console.warn("shadowdark-extras | Duration apply button missing tokenId or damage");
+				btn.disabled = false;
+				btn.innerHTML = originalHtml;
+				return;
 			}
 
-			// Update the button to show it was applied
-			$btn.html('<i class="fas fa-check"></i> Applied');
-			$btn.addClass("sdx-duration-applied");
+			try {
+				// Only GM can apply damage via socket or directly
+				if (!game.user.isGM) {
+					// Use socket to ask GM to apply
+					const socket = getSocket();
+					if (socket) {
+						socket.executeAsGM("applyDamage", tokenId, damage, actorName);
+					} else {
+						ui.notifications.warn("Cannot apply damage - no GM connected.");
+						btn.disabled = false;
+						btn.innerHTML = originalHtml;
+						return;
+					}
+				} else {
+					// GM applies directly
+					const token = canvas.tokens?.get(tokenId);
+					if (!token?.actor) {
+						ui.notifications.error("Could not find the target token.");
+						btn.disabled = false;
+						btn.innerHTML = originalHtml;
+						return;
+					}
 
-			// Update the message flags
-			await message.setFlag(MODULE_ID, "applied", true);
+					const currentHp = token.actor.system.attributes.hp.value;
+					const newHp = Math.max(0, currentHp - damage);
+					await token.actor.update({ "system.attributes.hp.value": newHp });
+				}
 
-			ui.notifications.info(`Applied ${damage} damage to ${actorName}`);
-		} catch (err) {
-			console.error("shadowdark-extras | Failed to apply duration damage:", err);
-			$btn.prop("disabled", false).html('<i class="fas fa-heart-broken"></i> Apply Damage');
-		}
+				// Update the button to show it was applied
+				btn.innerHTML = '<i class="fas fa-check"></i> Applied';
+				btn.classList.add("sdx-duration-applied");
+
+				// Update the message flags
+				await message.setFlag(MODULE_ID, "applied", true);
+
+				ui.notifications.info(`Applied ${damage} damage to ${actorName}`);
+			} catch (err) {
+				console.error("shadowdark-extras | Failed to apply duration damage:", err);
+				btn.disabled = false;
+				btn.innerHTML = originalHtml;
+			}
+		});
 	});
 }
 

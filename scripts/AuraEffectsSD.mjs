@@ -139,25 +139,23 @@ export function initAuraEffects() {
     });
 
     // Handle interactive aura card buttons
-    Hooks.on("renderChatMessage", (message, html) => {
-        const card = html.find(".sdx-aura-effect-card");
-        if (card.length === 0) return;
+    Hooks.on("renderChatMessageHTML", (message, html, context) => {
+        const card = html.querySelector(".sdx-aura-effect-card");
+        if (!card) return;
 
         // Apply Damage button
-        html.find(".sdx-aura-apply-damage").click(async (ev) => {
+        card.querySelector(".sdx-aura-apply-damage")?.addEventListener("click", async (ev) => {
             ev.preventDefault();
-            const btn = $(ev.currentTarget);
-            const cardElement = btn.closest(".sdx-aura-effect-card");
 
-            const targetId = cardElement.data("target-token-id");
-            const formula = cardElement.data("damage-formula");
+            const targetId = card.dataset.targetTokenId;
+            const formula = card.dataset.damageFormula;
 
             const targetToken = canvas.tokens.get(targetId);
             if (!targetToken) return ui.notifications.warn("shadowdark-extras | Target token not found on canvas");
 
             const config = {
                 damage: { formula: formula },
-                save: { halfOnSuccess: cardElement.data("half-damage") }
+                save: { halfOnSuccess: card.dataset.halfDamage === "true" }
             };
 
             // If not GM, execute via socket to avoid permission issues
@@ -172,16 +170,16 @@ export function initAuraEffects() {
                 }
             } else {
                 // Apply full damage when clicking this button (GM)
-                let auraActor = game.actors.get(cardElement.data("aura-actor-id"));
-                if (!auraActor) auraActor = canvas.tokens.get(cardElement.data("aura-actor-id"))?.actor;
+                let auraActor = game.actors.get(card.dataset.auraActorId);
+                if (!auraActor) auraActor = canvas.tokens.get(card.dataset.auraActorId)?.actor;
 
                 await applyAuraDamage(targetToken, config, false);
             }
 
             // Create reporting message
-            const sourceId = cardElement.data("source-token-id");
+            const sourceId = card.dataset.sourceTokenId;
             const sourceToken = canvas.tokens.get(sourceId);
-            const auraName = cardElement.find("strong").text();
+            const auraName = card.querySelector("strong")?.innerText || "Aura";
 
             await createAuraEffectMessage(sourceToken || targetToken, targetToken, "manual", {
                 damage: config.damage.formula, // formula for now, or we'd need roll result from socket
@@ -191,14 +189,12 @@ export function initAuraEffects() {
         });
 
         // Roll Save button
-        html.find(".sdx-aura-roll-save").click(async (ev) => {
+        card.querySelector(".sdx-aura-roll-save")?.addEventListener("click", async (ev) => {
             ev.preventDefault();
-            const btn = $(ev.currentTarget);
-            const cardElement = btn.closest(".sdx-aura-effect-card");
 
-            const targetId = cardElement.data("target-token-id");
-            const dc = cardElement.data("save-dc");
-            const ability = cardElement.data("save-ability");
+            const targetId = card.dataset.targetTokenId;
+            const dc = card.dataset.saveDc;
+            const ability = card.dataset.saveAbility;
 
             const targetToken = canvas.tokens.get(targetId);
             if (!targetToken?.actor) return ui.notifications.warn("shadowdark-extras | Target actor not found");
@@ -213,9 +209,9 @@ export function initAuraEffects() {
 
             const saveResult = await rollAuraSave(targetToken.actor, config.save);
 
-            const sourceId = cardElement.data("source-token-id");
+            const sourceId = card.dataset.sourceTokenId;
             const sourceToken = canvas.tokens.get(sourceId);
-            const auraName = cardElement.find("strong").text();
+            const auraName = card.querySelector("strong")?.innerText || "Aura";
 
             await createAuraEffectMessage(sourceToken || targetToken, targetToken, "manual", {
                 saveResult: saveResult,
@@ -225,15 +221,13 @@ export function initAuraEffects() {
         });
 
         // Apply Effects button
-        html.find(".sdx-aura-apply-effects").click(async (ev) => {
+        card.querySelector(".sdx-aura-apply-effects")?.addEventListener("click", async (ev) => {
             ev.preventDefault();
-            const btn = $(ev.currentTarget);
-            const cardElement = btn.closest(".sdx-aura-effect-card");
 
-            const targetId = cardElement.data("target-token-id");
-            const auraEffectId = cardElement.data("aura-effect-id");
-            const auraActorId = cardElement.data("aura-actor-id");
-            const effectUuids = (cardElement.data("effect-uuids") || "").split(",").filter(u => u);
+            const targetId = card.dataset.targetTokenId;
+            const auraEffectId = card.dataset.auraEffectId;
+            const auraActorId = card.dataset.auraActorId;
+            const effectUuids = (card.dataset.effectUuids || "").split(",").filter(u => u);
 
             const targetToken = canvas.tokens.get(targetId);
             if (!targetToken) return ui.notifications.warn("shadowdark-extras | Target token not found");

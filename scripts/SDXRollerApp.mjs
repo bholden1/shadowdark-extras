@@ -688,7 +688,7 @@ export class SDXRollerOverlay extends HandlebarsApplicationMixin(ApplicationV2) 
                     marked = true;
                     return { value: v, css: mode === "advantage" ? "sdx-die-adv" : "sdx-die-dis" };
                 }
-                return { v, css: "sdx-die-dropped" };
+                return { value: v, css: "sdx-die-dropped" };
             });
         };
         const entries = this.actors.map(a => {

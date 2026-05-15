@@ -80,8 +80,6 @@ import { initHexFog } from "./SDXHexFogSD.mjs";
 import { registerMaphubHooks } from "./MaphubSD.mjs";
 
 
-import { PixiPlugin } from "/scripts/greensock/esm/all.js";
-
 const MODULE_ID = "shadowdark-extras";
 const TRADE_JOURNAL_NAME = "__sdx_trade_sync__"; // Must match TradeWindowSD.mjs
 const CAROUSING_JOURNAL_NAME = "__sdx_carousing_sync__"; // Must match CarousingSD.mjs
@@ -106,10 +104,12 @@ initHexTooltip();
 initHexFog();
 registerMaphubHooks();
 Hooks.once("init", () => {
-	// Register GSAP Plugins
+	// Register GSAP Plugins (GSAP is loaded by Foundry core)
 	try {
-		gsap.registerPlugin(PixiPlugin);
-		console.log("Shadowdark Extras | Registered GSAP PixiPlugin");
+		if (typeof gsap !== "undefined" && typeof PixiPlugin !== "undefined") {
+			gsap.registerPlugin(PixiPlugin);
+			console.log("Shadowdark Extras | Registered GSAP PixiPlugin");
+		}
 	} catch (err) {
 		console.error("Shadowdark Extras | Failed to register GSAP PixiPlugin:", err);
 	}
@@ -19043,7 +19043,7 @@ Hooks.on("renderChatMessage", (message, html, data) => {
 /**
  * Hook into spell cast messages to trigger Item Macros
  */
-Hooks.on("renderChatMessage", async (message, html, data) => {
+Hooks.on("renderChatMessageHTML", async (message, html, context) => {
 	// Only process once per message
 	if (message._sdxSpellMacroProcessed) return;
 	message._sdxSpellMacroProcessed = true;
@@ -19052,13 +19052,15 @@ Hooks.on("renderChatMessage", async (message, html, data) => {
 	if (message.author?.id !== game.user.id) return;
 
 	// Check if this is a spell-type item
-	const cardData = html.find('.chat-card').data();
-	if (!cardData?.itemId || !cardData?.actorId) return;
+	const chatCard = html.querySelector('.chat-card');
+	const itemId = chatCard?.dataset.itemId;
+	const actorId = chatCard?.dataset.actorId;
+	if (!itemId || !actorId) return;
 
-	const actor = game.actors.get(cardData.actorId);
+	const actor = game.actors.get(actorId);
 	if (!actor) return;
 
-	const item = actor.items.get(cardData.itemId);
+	const item = actor.items.get(itemId);
 	if (!item) return;
 
 	// Only process spell-type items
@@ -19085,7 +19087,7 @@ Hooks.on("renderChatMessage", async (message, html, data) => {
 	const storedTargetIds = message.flags?.[MODULE_ID]?.targetIds || [];
 	const targets = canvas?.tokens ? storedTargetIds.map(id => canvas.tokens.get(id)).filter(Boolean) : [];
 
-	const context = {
+	const macroContext = {
 		isSuccess,
 		isFailure,
 		isCritical,
@@ -19119,15 +19121,15 @@ Hooks.on("renderChatMessage", async (message, html, data) => {
 
 	// Execute all applicable triggers
 	for (const trigger of triggersToFire) {
-		await executeSpellItemMacro(item, actor, trigger, context);
+		await executeSpellItemMacro(item, actor, trigger, macroContext);
 	}
 });
 
 /**
  * Hook into weapon attack rolls to trigger Item Macros
- * Use renderChatMessage instead of createChatMessage because rolls are populated later
+ * Use renderChatMessageHTML for v14 compatibility
  */
-Hooks.on("renderChatMessage", async (message, html, data) => {
+Hooks.on("renderChatMessageHTML", async (message, html, context) => {
 	// Only process once per message - use a flag to track
 	if (message._sdxItemMacroProcessed) return;
 	message._sdxItemMacroProcessed = true;
@@ -19136,8 +19138,8 @@ Hooks.on("renderChatMessage", async (message, html, data) => {
 	if (message.author?.id !== game.user.id) return;
 
 	// Check for rolls using HTML elements (like CombatSettingsSD does)
-	const hasDiceTotal = html.find('.dice-total').length > 0;
-	const hasD20Roll = html.find('.d20-roll').length > 0;
+	const hasDiceTotal = html.querySelector('.dice-total') !== null;
+	const hasD20Roll = html.querySelector('.d20-roll') !== null;
 	const flags = message.flags;
 
 	// Debug logging for troubleshooting
@@ -19233,7 +19235,7 @@ Hooks.on("renderChatMessage", async (message, html, data) => {
 	// Get roll result from the mainRoll data
 	const rollResult = mainRoll.roll?.total ?? null;
 
-	const context = {
+	const macroContext = {
 		isHit: isHit && !isCriticalMiss,
 		isMiss: isMiss || isCriticalMiss,
 		isCritical,
@@ -19262,7 +19264,7 @@ Hooks.on("renderChatMessage", async (message, html, data) => {
 	// Execute all applicable triggers
 	for (const trigger of triggersToFire) {
 		//console.log(`${MODULE_ID} | [DEBUG] Firing trigger: ${trigger}`);
-		await executeWeaponItemMacro(item, actor, trigger, context);
+		await executeWeaponItemMacro(item, actor, trigger, macroContext);
 	}
 });
 

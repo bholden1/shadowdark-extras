@@ -175,121 +175,136 @@ export function initTemplateEffects() {
     });
 
     // Hook for chat message buttons (Roll Save, Apply Damage)
-    Hooks.on("renderChatMessage", (message, html, data) => {
+    Hooks.on("renderChatMessageHTML", (message, html, context) => {
         // Handle Roll Save buttons
-        html.find('.sdx-template-roll-save-btn').on('click', async (event) => {
-            event.preventDefault();
-            const btn = event.currentTarget;
-            const $btn = $(btn);
+        const saveBtns = html.querySelectorAll('.sdx-template-roll-save-btn');
+        saveBtns.forEach(btn => {
+            btn.addEventListener('click', async (event) => {
+                event.preventDefault();
+                if (btn.disabled) return;
 
-            // Disable all save buttons immediately
-            const $allSaveBtns = html.find('.sdx-template-roll-save-btn');
-            if ($btn.prop('disabled')) return;
-            $allSaveBtns.prop('disabled', true);
+                // Disable all save buttons immediately
+                saveBtns.forEach(b => b.disabled = true);
 
-            const tokenId = btn.dataset.tokenId;
-            const actorId = btn.dataset.actorId;
-            const ability = btn.dataset.ability;
-            const dc = parseInt(btn.dataset.dc);
-            const halfOnSuccess = btn.dataset.halfOnSuccess === 'true';
-            const rollMode = btn.dataset.rollMode || 'normal';
+                const tokenId = btn.dataset.tokenId;
+                const actorId = btn.dataset.actorId;
+                const ability = btn.dataset.ability;
+                const dc = parseInt(btn.dataset.dc);
+                const halfOnSuccess = btn.dataset.halfOnSuccess === 'true';
+                const rollMode = btn.dataset.rollMode || 'normal';
 
-            // Get the actor
-            let actor = null;
-            const token = canvas.tokens?.get(tokenId);
-            if (token?.actor) {
-                actor = token.actor;
-            } else if (actorId) {
-                actor = game.actors.get(actorId);
-            }
-
-            if (!actor) {
-                ui.notifications.error("Could not find actor");
-                $allSaveBtns.prop('disabled', false);
-                return;
-            }
-
-            // Roll the save with the selected mode
-            const saveResult = await rollTemplateSave(actor, { ability, dc, rollMode });
-
-            // Update to show result - replace the button container
-            const saveText = saveResult.success ? "✓ SAVED" : "✗ FAILED";
-            const rollModeText = rollMode === 'advantage' ? ' (Adv)' : rollMode === 'disadvantage' ? ' (Dis)' : '';
-            const dieResult = saveResult.dieResults || saveResult.roll?.dice?.[0]?.results?.[0]?.result || "?";
-            const modifier = saveResult.modifier ?? 0;
-            const modifierStr = modifier >= 0 ? `+${modifier}` : `${modifier}`;
-
-            // Replace all buttons with the result
-            $allSaveBtns.parent().replaceWith(`
-                <div style="padding: 4px; text-align: center; background: #1a1a1a; border-radius: 3px;">
-                    <p style="margin: 2px 0; font-size: 12px;">
-                        Roll${rollModeText}: <strong>${dieResult}</strong> ${modifierStr} = <strong>${saveResult.total}</strong> vs DC ${dc}
-                    </p>
-                    <p style="margin: 2px 0; font-size: 13px;"><strong>${saveText}</strong></p>
-                </div>
-            `);
-
-            // If save succeeded with halfOnSuccess, update the damage buttons
-            if (saveResult.success && halfOnSuccess) {
-                const $fullBtn = html.find('.sdx-template-apply-damage-btn');
-                $fullBtn.hide();
-                html.find('.sdx-template-apply-half-damage-btn').css('background', '#3a5a3a');
-            } else if (!saveResult.success) {
-                // Failed save - hide half damage button
-                html.find('.sdx-template-apply-half-damage-btn').hide();
-            }
-        });
-
-        // Handle Apply Damage buttons
-        html.find('.sdx-template-apply-damage-btn, .sdx-template-apply-half-damage-btn').on('click', async (event) => {
-            event.preventDefault();
-            const btn = event.currentTarget;
-            const $btn = $(btn);
-
-            // Disable button immediately  
-            if ($btn.prop('disabled') || $btn.hasClass('sdx-applied')) return;
-            $btn.prop('disabled', true).html('<i class="fas fa-spinner fa-spin"></i> Applying...');
-
-            const tokenId = btn.dataset.tokenId;
-            const actorId = btn.dataset.actorId;
-            const damage = parseInt(btn.dataset.damage);
-            const damageType = btn.dataset.damageType;
-            const actorName = btn.dataset.actorName;
-
-            if (isNaN(damage)) {
-                $btn.prop('disabled', false).html('<i class="fas fa-heart-broken"></i> Apply Damage');
-                return;
-            }
-
-            try {
-                // Get the token and apply damage
+                // Get the actor
+                let actor = null;
                 const token = canvas.tokens?.get(tokenId);
-                let actor = token?.actor;
-                if (!actor && actorId) {
+                if (token?.actor) {
+                    actor = token.actor;
+                } else if (actorId) {
                     actor = game.actors.get(actorId);
                 }
 
                 if (!actor) {
-                    ui.notifications.error("Could not find target");
-                    $btn.prop('disabled', false).html('<i class="fas fa-heart-broken"></i> Apply Damage');
+                    ui.notifications.error("Could not find actor");
+                    saveBtns.forEach(b => b.disabled = false);
                     return;
                 }
 
-                const currentHp = actor.system?.attributes?.hp?.value ?? 0;
-                const newHp = Math.max(0, currentHp - damage);
-                await actor.update({ "system.attributes.hp.value": newHp });
+                // Roll the save with the selected mode
+                const saveResult = await rollTemplateSave(actor, { ability, dc, rollMode });
 
-                // Update button to show applied
-                $btn.addClass('sdx-applied').html(`<i class="fas fa-check"></i> Applied ${damage}`);
+                // Update to show result - replace the button container
+                const saveText = saveResult.success ? "✓ SAVED" : "✗ FAILED";
+                const rollModeText = rollMode === 'advantage' ? ' (Adv)' : rollMode === 'disadvantage' ? ' (Dis)' : '';
+                const dieResult = saveResult.dieResults || saveResult.roll?.dice?.[0]?.results?.[0]?.result || "?";
+                const modifier = saveResult.modifier ?? 0;
+                const modifierStr = modifier >= 0 ? `+${modifier}` : `${modifier}`;
 
-                // Hide other damage buttons
-                html.find('.sdx-template-apply-damage-btn, .sdx-template-apply-half-damage-btn').not($btn).hide();
+                // Replace the parent container of the buttons
+                const parent = btn.parentElement;
+                if (parent) {
+                    const resultDiv = document.createElement('div');
+                    resultDiv.style.cssText = "padding: 4px; text-align: center; background: #1a1a1a; border-radius: 3px;";
+                    resultDiv.innerHTML = `
+                        <p style="margin: 2px 0; font-size: 12px;">
+                            Roll${rollModeText}: <strong>${dieResult}</strong> ${modifierStr} = <strong>${saveResult.total}</strong> vs DC ${dc}
+                        </p>
+                        <p style="margin: 2px 0; font-size: 13px;"><strong>${saveText}</strong></p>
+                    `;
+                    parent.replaceWith(resultDiv);
+                }
 
-                ui.notifications.info(`Applied ${damage} ${damageType} damage to ${actorName}`);
-            } catch (err) {
-                console.error("shadowdark-extras | Error applying template damage:", err);
-                $btn.prop('disabled', false).html('<i class="fas fa-heart-broken"></i> Apply Damage');
-            }
+                // If save succeeded with halfOnSuccess, update the damage buttons
+                if (saveResult.success && halfOnSuccess) {
+                    const fullBtn = html.querySelector('.sdx-template-apply-damage-btn');
+                    if (fullBtn) fullBtn.style.display = 'none';
+                    const halfBtn = html.querySelector('.sdx-template-apply-half-damage-btn');
+                    if (halfBtn) halfBtn.style.background = '#3a5a3a';
+                } else if (!saveResult.success) {
+                    // Failed save - hide half damage button
+                    const halfBtn = html.querySelector('.sdx-template-apply-half-damage-btn');
+                    if (halfBtn) halfBtn.style.display = 'none';
+                }
+            });
+        });
+
+        // Handle Apply Damage buttons
+        const damageBtns = html.querySelectorAll('.sdx-template-apply-damage-btn, .sdx-template-apply-half-damage-btn');
+        damageBtns.forEach(btn => {
+            btn.addEventListener('click', async (event) => {
+                event.preventDefault();
+
+                // Disable button immediately  
+                if (btn.disabled || btn.classList.contains('sdx-applied')) return;
+                btn.disabled = true;
+                const originalHtml = btn.innerHTML;
+                btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Applying...';
+
+                const tokenId = btn.dataset.tokenId;
+                const actorId = btn.dataset.actorId;
+                const damage = parseInt(btn.dataset.damage);
+                const damageType = btn.dataset.damageType;
+                const actorName = btn.dataset.actorName;
+
+                if (isNaN(damage)) {
+                    btn.disabled = false;
+                    btn.innerHTML = originalHtml;
+                    return;
+                }
+
+                try {
+                    // Get the token and apply damage
+                    const token = canvas.tokens?.get(tokenId);
+                    let actor = token?.actor;
+                    if (!actor && actorId) {
+                        actor = game.actors.get(actorId);
+                    }
+
+                    if (!actor) {
+                        ui.notifications.error("Could not find target");
+                        btn.disabled = false;
+                        btn.innerHTML = originalHtml;
+                        return;
+                    }
+
+                    const currentHp = actor.system?.attributes?.hp?.value ?? 0;
+                    const newHp = Math.max(0, currentHp - damage);
+                    await actor.update({ "system.attributes.hp.value": newHp });
+
+                    // Update button to show applied
+                    btn.classList.add('sdx-applied');
+                    btn.innerHTML = `<i class="fas fa-check"></i> Applied ${damage}`;
+
+                    // Hide other damage buttons
+                    damageBtns.forEach(b => {
+                        if (b !== btn) b.style.display = 'none';
+                    });
+
+                    ui.notifications.info(`Applied ${damage} ${damageType} damage to ${actorName}`);
+                } catch (err) {
+                    console.error("shadowdark-extras | Error applying template damage:", err);
+                    btn.disabled = false;
+                    btn.innerHTML = originalHtml;
+                }
+            });
         });
     });
 
