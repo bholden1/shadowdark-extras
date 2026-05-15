@@ -17130,61 +17130,45 @@ Hooks.on("updateActor", async (actor, changes, options, userId) => {
 });
 
 // Inject Freya's Omen reroll button
-Hooks.on("renderChatMessage", (message, html, data) => {
+Hooks.on("renderChatMessageHTML", (message, html, context) => {
 	const flags = message.flags?.shadowdark;
-	//console.log(`${MODULE_ID} | Checking Freya's Omen for message ${message.id}`, flags);
 	if (!flags?.isRoll) return;
 
 	// Check if it's a critical failure on a spell
 	const isCriticalFailure = flags.critical === "failure";
-	//console.log(`${MODULE_ID} | isCriticalFailure: ${isCriticalFailure}`);
+	if (!isCriticalFailure) return;
 
-	if (isCriticalFailure) {
-		// Check if it looks like a spell
-		// We can check item type in flags.rolls.main.item (if available) or infer from roll data
-		// But relying on "system.lost" logic implies it's a spell.
-		// However, chat card doesn't show "system.lost".
-		// Use message content or title?
-		const flavor = message.flavor || "";
-		// But safest is to check actor flag first.
+	let actor = message.author?.character; // Default to user character
+	if (message.speaker.actor) actor = game.actors.get(message.speaker.actor);
+	if (message.speaker.token && canvas.tokens) {
+		const token = canvas.tokens.get(message.speaker.token);
+		if (token) actor = token.actor;
+	}
+	if (!actor && message.actor) actor = message.actor;
+	if (!actor) return;
 
-		let actor = message.author?.character; // Default to user character
-		if (message.speaker.actor) actor = game.actors.get(message.speaker.actor);
-		if (message.speaker.token && canvas.tokens) {
-			const token = canvas.tokens.get(message.speaker.token);
-			if (token) actor = token.actor;
-		}
+	const hasFreyasOmen = actor.getFlag(MODULE_ID, "freyasOmen");
+	if (!hasFreyasOmen) return;
 
-		// Shadowdark system helper?
-		// Let's use standard Foundry method if available, or manual lookup
-		if (!actor && message.actor) actor = message.actor;
+	// v14: html is a raw HTMLElement, not jQuery. Use vanilla DOM.
+	const itemCard = html.querySelector(".item-card");
+	const itemId = itemCard?.dataset?.itemId;
+	if (!itemId) return;
 
-		if (!actor) {
-			//console.log(`${MODULE_ID} | No actor found for Freya's Omen check`);
-			return;
-		}
+	const item = actor.items.get(itemId);
+	if (!item || !item.isSpell()) return;
 
-		const hasFreyasOmen = actor.getFlag(MODULE_ID, "freyasOmen");
-		//console.log(`${MODULE_ID} | Actor ${actor.name} has Freya's Omen: ${hasFreyasOmen}`);
+	const diceRoll = html.querySelector(".dice-roll");
+	if (!diceRoll) return;
 
-		if (hasFreyasOmen) {
-			// Check if item was a spell. 
-			// We can try to get the item from data-item-id
-			const itemId = html.find(".item-card").data("item-id");
-			//console.log(`${MODULE_ID} | Item ID from card: ${itemId}`);
+	const btn = document.createElement("button");
+	btn.className = "sdx-freyas-omen-reroll";
+	btn.style.marginTop = "5px";
+	btn.innerHTML = `<i class="fas fa-redo"></i> ${game.i18n.localize("SHADOWDARK.chat_card.button.freyas_omen_reroll")}`;
 
-			if (!itemId) return;
-			const item = actor.items.get(itemId);
-			if (!item || !item.isSpell()) return;
-
-			const $diceRoll = html.find(".dice-roll");
-			const btn = $(`<button class="sdx-freyas-omen-reroll" style="margin-top: 5px;">
-				<i class="fas fa-redo"></i> ${game.i18n.localize("SHADOWDARK.chat_card.button.freyas_omen_reroll")}
-			</button>`);
-
-			btn.click(async (ev) => {
-				ev.preventDefault();
-				ev.stopPropagation();
+	btn.addEventListener("click", async (ev) => {
+		ev.preventDefault();
+		ev.stopPropagation();
 				// Reroll the item
 				if (item) {
 					//console.log(`${MODULE_ID} | Rerrolling spell: ${item.name}`);
@@ -17249,9 +17233,7 @@ Hooks.on("renderChatMessage", (message, html, data) => {
 				}
 			});
 
-			$diceRoll.after(btn);
-		}
-	}
+	diceRoll.after(btn);
 });
 
 // Clean up deleted actors from parties
