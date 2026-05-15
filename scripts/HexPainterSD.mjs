@@ -110,7 +110,7 @@ export async function loadTileAssets() {
         }
     } else {
         try {
-            const listing = await FilePicker.browse("data", TILE_FOLDER);
+            const listing = await foundry.applications.apps.FilePicker.implementation.browse("data", TILE_FOLDER);
             const pngFiles = (listing.files || []).filter(f => f.endsWith(".png"));
 
             _tiles = pngFiles
@@ -154,7 +154,7 @@ async function ensureCustomFolderStructure() {
         // Check if data/hexes folder exists
         let hexesExists = false;
         try {
-            await FilePicker.browse("data", CUSTOM_TILE_FOLDER);
+            await foundry.applications.apps.FilePicker.implementation.browse("data", CUSTOM_TILE_FOLDER);
             hexesExists = true;
         } catch (e) {
             hexesExists = false;
@@ -162,7 +162,7 @@ async function ensureCustomFolderStructure() {
 
         // Create main hexes folder if it doesn't exist
         if (!hexesExists) {
-            await FilePicker.createDirectory("data", CUSTOM_TILE_FOLDER);
+            await foundry.applications.apps.FilePicker.implementation.createDirectory("data", CUSTOM_TILE_FOLDER);
             console.log(`${MODULE_ID} | Created ${CUSTOM_TILE_FOLDER} folder`);
         }
 
@@ -170,10 +170,10 @@ async function ensureCustomFolderStructure() {
         for (const biome of BIOME_SUBDIRS) {
             const biomePath = `${CUSTOM_TILE_FOLDER}/${biome}`;
             try {
-                await FilePicker.browse("data", biomePath);
+                await foundry.applications.apps.FilePicker.implementation.browse("data", biomePath);
             } catch (e) {
                 // Folder doesn't exist, create it
-                await FilePicker.createDirectory("data", biomePath);
+                await foundry.applications.apps.FilePicker.implementation.createDirectory("data", biomePath);
                 console.log(`${MODULE_ID} | Created ${biomePath} folder`);
             }
         }
@@ -201,7 +201,7 @@ async function loadCustomTileAssets() {
 
     try {
         // Load tiles from main hexes folder
-        const mainListing = await FilePicker.browse("data", CUSTOM_TILE_FOLDER);
+        const mainListing = await foundry.applications.apps.FilePicker.implementation.browse("data", CUSTOM_TILE_FOLDER);
         const mainPngFiles = (mainListing.files || []).filter(f => f.endsWith(".png") || f.endsWith(".webp"));
 
         for (const path of mainPngFiles) {
@@ -219,7 +219,7 @@ async function loadCustomTileAssets() {
         for (const biome of BIOME_SUBDIRS) {
             const biomePath = `${CUSTOM_TILE_FOLDER}/${biome}`;
             try {
-                const biomeListing = await FilePicker.browse("data", biomePath);
+                const biomeListing = await foundry.applications.apps.FilePicker.implementation.browse("data", biomePath);
                 const biomePngFiles = (biomeListing.files || []).filter(f => f.endsWith(".png") || f.endsWith(".webp"));
 
                 for (const path of biomePngFiles) {
@@ -260,7 +260,7 @@ async function loadColoredTileAssets() {
 
     try {
         // Load tiles from main Hexes folder
-        const mainListing = await FilePicker.browse("data", COLORED_TILE_FOLDER);
+        const mainListing = await foundry.applications.apps.FilePicker.implementation.browse("data", COLORED_TILE_FOLDER);
         const mainPngFiles = (mainListing.files || []).filter(f => f.endsWith(".png") || f.endsWith(".webp"));
 
         for (const path of mainPngFiles) {
@@ -279,7 +279,7 @@ async function loadColoredTileAssets() {
         for (const dirPath of subdirs) {
             const biome = dirPath.split("/").pop();
             try {
-                const biomeListing = await FilePicker.browse("data", dirPath);
+                const biomeListing = await foundry.applications.apps.FilePicker.implementation.browse("data", dirPath);
                 const biomePngFiles = (biomeListing.files || []).filter(f => f.endsWith(".png") || f.endsWith(".webp"));
 
                 for (const path of biomePngFiles) {
@@ -321,7 +321,7 @@ async function loadSymbolTileAssets() {
 
     try {
         // Load tiles from main symbols folder
-        const mainListing = await FilePicker.browse("data", SYMBOLS_TILE_FOLDER);
+        const mainListing = await foundry.applications.apps.FilePicker.implementation.browse("data", SYMBOLS_TILE_FOLDER);
         const mainPngFiles = (mainListing.files || []).filter(f => f.endsWith(".png") || f.endsWith(".webp"));
 
         for (const path of mainPngFiles) {
@@ -340,7 +340,7 @@ async function loadSymbolTileAssets() {
         for (const dirPath of subdirs) {
             const category = dirPath.split("/").pop();
             try {
-                const categoryListing = await FilePicker.browse("data", dirPath);
+                const categoryListing = await foundry.applications.apps.FilePicker.implementation.browse("data", dirPath);
                 const categoryPngFiles = (categoryListing.files || []).filter(f => f.endsWith(".png") || f.endsWith(".webp"));
 
                 for (const path of categoryPngFiles) {

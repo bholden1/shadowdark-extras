@@ -9042,7 +9042,7 @@ function isPartyActor(actor) {
  */
 function registerPartySheet() {
 	// Register the Party sheet for NPC actors that are flagged as parties
-	Actors.registerSheet(MODULE_ID, PartySheetSD, {
+	foundry.documents.collections.Actors.registerSheet(MODULE_ID, PartySheetSD, {
 		types: ["NPC"],
 		makeDefault: false,
 		label: game.i18n.localize("SHADOWDARK_EXTRAS.party.name")
@@ -9066,7 +9066,7 @@ function registerPartySheet() {
  */
 function registerPotionSheet() {
 	// Register the Potion sheet for Potion type items
-	Items.registerSheet(MODULE_ID, PotionSheetSD, {
+	foundry.documents.collections.Items.registerSheet(MODULE_ID, PotionSheetSD, {
 		types: ["Potion"],
 		makeDefault: true,
 		label: "Shadowdark Extras: Potion Sheet"
@@ -9080,7 +9080,7 @@ function registerPotionSheet() {
  */
 function registerBackgroundSheet() {
 	// Register the Background sheet for Background type items
-	Items.registerSheet(MODULE_ID, BackgroundSheetSD, {
+	foundry.documents.collections.Items.registerSheet(MODULE_ID, BackgroundSheetSD, {
 		types: ["Background"],
 		makeDefault: true,
 		label: "Shadowdark Extras: Background Sheet"
@@ -9094,7 +9094,7 @@ function registerBackgroundSheet() {
  */
 function registerNPCAttackSheet() {
 	// Register the NPC Attack sheet for NPC Attack type items
-	Items.registerSheet(MODULE_ID, NPCAttackSheetSD, {
+	foundry.documents.collections.Items.registerSheet(MODULE_ID, NPCAttackSheetSD, {
 		types: ["NPC Attack"],
 		makeDefault: true,
 		label: "Shadowdark Extras: NPC Attack Sheet"
@@ -9108,7 +9108,7 @@ function registerNPCAttackSheet() {
  */
 function registerNPCFeatureSheet() {
 	// Register the NPC Feature sheet for NPC Feature and NPC Spell type items
-	Items.registerSheet(MODULE_ID, NPCFeatureSheetSD, {
+	foundry.documents.collections.Items.registerSheet(MODULE_ID, NPCFeatureSheetSD, {
 		types: ["NPC Feature", "NPC Spell"],
 		makeDefault: true,
 		label: "Shadowdark Extras: NPC Feature/Spell Sheet"
@@ -9121,7 +9121,7 @@ function registerNPCFeatureSheet() {
  * Register the AppV2 Class Ability item sheet
  */
 function registerClassAbilitySheet() {
-	Items.registerSheet(MODULE_ID, ClassAbilitySheetSD, {
+	foundry.documents.collections.Items.registerSheet(MODULE_ID, ClassAbilitySheetSD, {
 		types: ["Class Ability"],
 		makeDefault: true,
 		label: "Shadowdark Extras: Class Ability Sheet"
@@ -21746,7 +21746,7 @@ Hooks.once("ready", () => {
 
 Hooks.once("init", () => {
 	// Register NPC Special Attack Sheet
-	Items.registerSheet("shadowdark", NPCSpecialAttackSheetSD, {
+	foundry.documents.collections.Items.registerSheet("shadowdark", NPCSpecialAttackSheetSD, {
 		types: ["NPC Special Attack"],
 		makeDefault: true,
 		label: "SDX Special Attack Sheet (V2)"
