@@ -7,6 +7,7 @@ import { getWeaponBonuses, getWeaponEffectsToApply, evaluateRequirements, calcul
 import { startDurationSpell, linkEffectToDurationSpell, linkEffectToFocusSpell, linkTargetToFocusSpell, startFocusSpellIfNeeded, getActiveDurationSpells, endFocusSpell } from "./FocusSpellTrackerSD.mjs";
 import { setupTemplateEffectFlags, applyTemplateEffect, getTokensInTemplate } from "./TemplateEffectsSD.mjs";
 import { createAuraOnActor } from "./AuraEffectsSD.mjs";
+import { readSdRollOutcome, readSdDamageRoll, resolveCardContext } from "./sd4Compat.mjs";
 
 const MODULE_ID = "shadowdark-extras";
 let socketlibSocket = null;
@@ -1626,8 +1627,10 @@ export async function injectDamageCard(message, html, data) {
 
 	// Note: hideDamageCardOnFailedAttack check is done later after item type is known (around line 1610)
 
-	// Check if this is a Shadowdark weapon/attack card with damage OR a spell with damage configured
-	const hasWeaponCard = html.find('.chat-card').length > 0;
+	// Check if this is a Shadowdark weapon/attack card with damage OR a spell with damage configured.
+	// SD 4.x has no .chat-card class — also recognize via flags.shadowdark.rollConfig presence.
+	const hasWeaponCard = html.find('.chat-card, .item-card').length > 0
+		|| !!message.flags?.shadowdark?.rollConfig;
 	const hasDamageRoll = html.find('.dice-total').length > 0;
 
 	// Also check for damage text or damage formula using localized keywords
@@ -1668,19 +1671,10 @@ export async function injectDamageCard(message, html, data) {
 	let casterActor = null; // The actor who owns the spell item
 	let item = null; // The spell/potion item
 
-	// Get the item from the chat card if it exists
-	let cardData = html.find('.chat-card').data();
+	// Get the item from the chat card if it exists (SD 3.x DOM or SD 4.x rollConfig).
+	const ctx = resolveCardContext(message, html);
+	let cardData = ctx?.itemId ? { actorId: ctx.actorId, itemId: ctx.itemId } : null;
 	let itemType = null; // Track the item type
-
-	// SD 4.x fallback: .chat-card was dropped. Read item/actor from flags.shadowdark.rollConfig.
-	if (!cardData?.actorId || !cardData?.itemId) {
-		const rc = message.flags?.shadowdark?.rollConfig;
-		const itemUuid = rc?.itemUuid || rc?.cast?.spellUuid;
-		if (rc?.actorId && itemUuid) {
-			cardData = { actorId: rc.actorId, itemId: itemUuid.split(".").pop() };
-			console.log(`${MODULE_ID} | injectDamageCard SD4 fallback engaged: actorId=${cardData.actorId} itemId=${cardData.itemId}`);
-		}
-	}
 
 	if (cardData?.actorId && cardData?.itemId) {
 
@@ -1821,13 +1815,10 @@ export async function injectDamageCard(message, html, data) {
 		} else {
 			// Check if the spell cast was successful (skip this check for potions and scrolls which always succeed)
 			// Wands have spell rolls, so they need the success check
+			const summonOutcome = readSdRollOutcome(message);
 			if (!["Potion", "Scroll"].includes(itemType)) {
-				const shadowdarkRolls = message.flags?.shadowdark?.rolls;
-				const mainRoll = shadowdarkRolls?.main;
-
-				if (!mainRoll || mainRoll.success !== true) {
-					return;
-				}
+				if (summonOutcome.isMasked) return;   // private roll — don't auto-spawn on non-recipient clients
+				if (!summonOutcome.isSuccess) return;
 			}
 
 			// Mark as spawned immediately (synchronous)
@@ -1846,9 +1837,7 @@ export async function injectDamageCard(message, html, data) {
 			}
 
 			// Check for critical success to double duration
-			const shadowdarkRolls = message.flags?.shadowdark?.rolls;
-			const mainRoll = shadowdarkRolls?.main;
-			const isCriticalSuccess = mainRoll?.critical === "success";
+			const isCriticalSuccess = summonOutcome.isCriticalSuccess;
 			if (isCriticalSuccess) {
 			}
 
@@ -1864,11 +1853,9 @@ export async function injectDamageCard(message, html, data) {
 		} else {
 			let shouldGive = true;
 			if (!["Potion", "Scroll"].includes(itemType)) {
-				const shadowdarkRolls = message.flags?.shadowdark?.rolls;
-				const mainRoll = shadowdarkRolls?.main;
-				if (!mainRoll || mainRoll.success !== true) {
-					shouldGive = false;
-				}
+				const itemGiveOutcome = readSdRollOutcome(message);
+				if (itemGiveOutcome.isMasked) shouldGive = false;   // private roll — skip on non-recipient clients
+				else if (!itemGiveOutcome.isSuccess) shouldGive = false;
 			}
 			if (shouldGive) {
 				_itemGiveMessages.add(message.id);
@@ -1943,34 +1930,9 @@ export async function injectDamageCard(message, html, data) {
 	// Note: Potions and Scrolls don't have successful roll requirements (they always succeed when used)
 	// Wands DO have spell rolls, so they need the success check
 	if (useTemplateTargeting && !["Potion", "Scroll"].includes(itemType)) {
-		// Legacy SD 3.x: flags.shadowdark.rolls.main.success
-		const shadowdarkRolls = message.flags?.shadowdark?.rolls;
-		const mainRoll = shadowdarkRolls?.main;
-		let isMainRollSuccess = mainRoll?.success === true;
-
-		// SD 4.x fallback: rolls.main no longer exists. Read success from the typed Roll instance.
-		// Prefer .success on the Roll (SD 4.x sets it natively); fall back to total≥DC for safety.
-		if (!mainRoll) {
-			const v4MainRoll = message.rolls?.find(r => (r.type ?? r.options?.type) === "main")
-				?? message.rolls?.[0];
-			if (v4MainRoll) {
-				if (typeof v4MainRoll.success === "boolean") {
-					isMainRollSuccess = v4MainRoll.success;
-				} else {
-					const dc = v4MainRoll.options?.dc
-						?? message.flags?.shadowdark?.rollConfig?.mainRoll?.dc;
-					const total = v4MainRoll.total;
-					if (typeof dc === "number" && typeof total === "number") {
-						isMainRollSuccess = total >= dc;
-					}
-				}
-				console.log(`${MODULE_ID} | template gate SD4 success: ${isMainRollSuccess}`);
-			}
-		}
-
-		if (!isMainRollSuccess) {
-			useTemplateTargeting = false;
-		}
+		const templateOutcome = readSdRollOutcome(message);
+		if (templateOutcome.isMasked) useTemplateTargeting = false;   // private roll — don't show template prompt
+		else if (!templateOutcome.isSuccess) useTemplateTargeting = false;
 	}
 
 	if (useTemplateTargeting) {
@@ -2121,26 +2083,7 @@ export async function injectDamageCard(message, html, data) {
 							damageType: templateEffectsConfig.damage?.type || '',
 							saveEnabled: templateEffectsConfig.save?.enabled || false,
 							saveDCFormula: templateEffectsConfig.save?.dc || '12',  // Store as formula string
-							spellcastingCheckTotal: (() => {
-								let total = message.flags?.shadowdark?.rolls?.main?.total;
-
-								// Check for nested roll object (structure shown in user screenshot)
-								if (total === undefined) {
-									total = message.flags?.shadowdark?.rolls?.main?.roll?.total;
-								}
-
-								// Fallback to core rolls if flags are missing
-								if (total === undefined && message.rolls?.length > 0) {
-									total = message.rolls[0].total;
-								}
-
-								total = total || 0;
-								console.log(`shadowdark-extras | Extracted spellcastingCheckTotal: ${total}`, {
-									flags: message.flags?.shadowdark?.rolls,
-									core: message.rolls?.map(r => r.total)
-								});
-								return total;
-							})(), // Caster's spell roll
+							spellcastingCheckTotal: readSdRollOutcome(message).total ?? 0, // Caster's spell roll
 							casterLevel: casterActor?.system?.level?.value || 1,
 							casterAbilities: {
 								str: casterActor?.system?.abilities?.str?.mod || 0,
@@ -2274,9 +2217,10 @@ export async function injectDamageCard(message, html, data) {
 	const auraAlreadyCreated = message.getFlag(MODULE_ID, "auraCreated");
 
 	// Check if spell cast was successful (treat no roll as success for scrolls/wands)
-	const auraShadowdarkRolls = message.flags?.shadowdark?.rolls;
-	const auraMainRoll = auraShadowdarkRolls?.main;
-	const spellCastSuccessful = !auraMainRoll || auraMainRoll.success === true;
+	const auraOutcome = readSdRollOutcome(message);
+	const auraMainRoll = auraOutcome.mainRoll;
+	// "No roll" (scroll/wand auto-success) OR roll succeeded. Skip on masked rolls.
+	const spellCastSuccessful = !auraOutcome.isMasked && (!auraMainRoll || auraOutcome.isSuccess);
 
 	let auraCreatedThisCall = false;
 	if (auraConfig?.enabled && !isFocusRoll && !auraAlreadyCreated && spellCastSuccessful) {
@@ -2409,12 +2353,9 @@ export async function injectDamageCard(message, html, data) {
 	if ((isSpellWithDamage || (isSpellWithEffects && spellDamageConfig?.effectsChallenge?.enabled)) && spellDamageConfig) {
 		// Check if the spell cast was successful (skip this check for potions, scrolls, wands, and NPC Features)
 		if (!["Potion", "Scroll", "Wand", "NPC Feature", "NPC Spell"].includes(itemType)) {
-			const shadowdarkRolls = message.flags?.shadowdark?.rolls;
-			const mainRoll = shadowdarkRolls?.main;
-
-			if (!mainRoll || mainRoll.success !== true) {
-				return;
-			}
+			const spellEffectsOutcome = readSdRollOutcome(message);
+			if (spellEffectsOutcome.isMasked) return;   // private roll — don't apply effects on non-recipient clients
+			if (!spellEffectsOutcome.isSuccess) return;
 		}
 
 
@@ -2505,9 +2446,7 @@ export async function injectDamageCard(message, html, data) {
 			try {
 				// Check if the spell was a critical success (for dice doubling)
 				// Available both for damage and effects challenge context
-				const shadowdarkRolls2 = message.flags?.shadowdark?.rolls;
-				const mainRoll2 = shadowdarkRolls2?.main;
-				isSpellCritical = mainRoll2?.critical === "success";
+				isSpellCritical = readSdRollOutcome(message).isCriticalSuccess;
 
 				// Only process damage formula if damage is explicitly enabled
 				if (spellDamageConfig && spellDamageConfig.enabled) {
@@ -3023,14 +2962,11 @@ export async function injectDamageCard(message, html, data) {
 				}
 			}
 		}
-		// Shadowdark stores rolls in message.flags.shadowdark.rolls
+		// SD 4.x stores damage as a typed Roll on message.rolls; v3 stored under flags.shadowdark.rolls.damage.roll.
 		else {
-			const shadowdarkRolls = message.flags?.shadowdark?.rolls;
-			if (shadowdarkRolls?.damage?.roll?.total) {
-				totalDamage = shadowdarkRolls.damage.roll.total;
-			} else if (message.rolls?.[0]) {
-				// Fallback to standard rolls array
-				totalDamage = message.rolls[0].total || 0;
+			const damageRollData = readSdDamageRoll(message);
+			if (typeof damageRollData.total === "number") {
+				totalDamage = damageRollData.total;
 			} else {
 				// Last resort: try to parse from the displayed total in the damage section
 				const $damageTotal = html.find('.card-damage-roll-single .dice-total, .card-damage-rolls .dice-total').first();
@@ -3065,9 +3001,7 @@ export async function injectDamageCard(message, html, data) {
 	}
 
 	// Check if this was a critical hit (for doubling bonus dice)
-	const shadowdarkRolls = message.flags?.shadowdark?.rolls;
-	const mainRoll = shadowdarkRolls?.main;
-	const isCritical = mainRoll?.critical === "success";
+	const isCritical = readSdRollOutcome(message).isCriticalSuccess;
 
 	// Check if spell has critical effects and this was a critical success
 	// If critical effects exist, use them INSTEAD of normal effects
@@ -3361,10 +3295,15 @@ export async function injectDamageCard(message, html, data) {
 		// If damage card is hidden, show a minimal summary for both spells AND weapons (if they have bonuses)
 
 		// Hide native damage rolls to avoid redundancy when showing our summary
-		// This applies to Shadowdark's native weapon damage displays
+		// This applies to Shadowdark's native weapon damage displays.
+		// SD 4.x doesn't render `.chat-card` so these selectors silently no-op,
+		// but we guard explicitly for clarity (per SD4-COMPAT-SWEEP-PLAN Phase 3.4).
 		html.find('.card-damage-roll-single, .card-damage-rolls').hide();
-		html.find('.chat-card h3:contains("Damage Roll")').hide();
-		html.find('.chat-card h4:contains("Damage Roll")').hide();
+		const $sdLegacyCard = html.find('.chat-card');
+		if ($sdLegacyCard.length) {
+			$sdLegacyCard.find('h3:contains("Damage Roll")').hide();
+			$sdLegacyCard.find('h4:contains("Damage Roll")').hide();
+		}
 
 		const isHealing = damageType?.toLowerCase() === "healing";
 		const damageLabel = isHealing ? "Healing" : "Damage";
@@ -3461,8 +3400,8 @@ export async function injectDamageCard(message, html, data) {
 
 	if ((canApplyDamage || canApplyConditions) && hasValidTargets && messageAuthorId === game.user.id) {
 		// Check if this was an attack that hit
-		const shadowdarkRolls = message.flags?.shadowdark?.rolls;
-		const mainRoll = shadowdarkRolls?.main;
+		const autoApplyOutcome = readSdRollOutcome(message);
+		const mainRoll = autoApplyOutcome.mainRoll;
 
 
 		// Check for already applied flag (persistently) or in-memory (for immediate re-renders)
@@ -3472,10 +3411,13 @@ export async function injectDamageCard(message, html, data) {
 
 		// Only auto-apply if:
 		// 1. There's no main roll at all (pure damage roll with no attack), OR
-		// 2. The main roll exists AND success is explicitly true
+		// 2. The main roll exists AND success is explicitly true (and not masked from this client)
 		// AND 3. No aura was just created/processed to avoid double-application
 		// AND 4. Has not already been applied
-		const shouldAutoApply = (!mainRoll || mainRoll.success === true) && !auraCreatedThisCall && !alreadyApplied;
+		const shouldAutoApply = !autoApplyOutcome.isMasked
+			&& (!mainRoll || autoApplyOutcome.isSuccess)
+			&& !auraCreatedThisCall
+			&& !alreadyApplied;
 
 		if (shouldAutoApply) {
 			// Mark as applied immediately to prevent race conditions
@@ -3531,9 +3473,10 @@ export async function injectDamageCard(message, html, data) {
 		messageAuthorId === game.user.id &&
 		!message.getFlag(MODULE_ID, "durationTrackerStarted")) {
 
-		const shadowdarkRolls = message.flags?.shadowdark?.rolls;
-		const mainRoll = shadowdarkRolls?.main;
-		const castSuccessful = !mainRoll || mainRoll.success === true;
+		const durationOutcome = readSdRollOutcome(message);
+		const mainRoll = durationOutcome.mainRoll;
+		// "No roll" (auto-success) OR roll succeeded. Skip on masked rolls.
+		const castSuccessful = !durationOutcome.isMasked && (!mainRoll || durationOutcome.isSuccess);
 
 		if (castSuccessful) {
 			// Create a unique key for this message's duration tracking
@@ -3614,12 +3557,11 @@ export async function injectDamageCard(message, html, data) {
  * Returns an object with formula, total, diceHtml, and bonusHtml
  */
 async function buildRollBreakdown(message, weaponBonusDamage = null, isCritical = false, baseDamageType = 'standard') {
-	// Try to get the damage roll from Shadowdark's rolls
-	const shadowdarkRolls = message.flags?.shadowdark?.rolls;
-	const damageRollData = shadowdarkRolls?.damage?.roll;
+	// Try to get the damage roll (SD 4.x typed Roll OR v3 flag fallback)
+	const damageRollData = readSdDamageRoll(message).roll;
 
-	// Also check standard message rolls
-	const messageRoll = message.rolls?.[0];
+	// Also check standard message rolls — prefer the main-typed Roll over rolls[0] for v4 safety
+	const messageRoll = readSdRollOutcome(message).mainRoll ?? message.rolls?.[0];
 
 	// Also check for synced spell roll in flags
 	const syncedSpellResults = message.getFlag(MODULE_ID, "spellDamageResults");
