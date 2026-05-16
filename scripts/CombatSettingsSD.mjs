@@ -1669,8 +1669,18 @@ export async function injectDamageCard(message, html, data) {
 	let item = null; // The spell/potion item
 
 	// Get the item from the chat card if it exists
-	const cardData = html.find('.chat-card').data();
+	let cardData = html.find('.chat-card').data();
 	let itemType = null; // Track the item type
+
+	// SD 4.x fallback: .chat-card was dropped. Read item/actor from flags.shadowdark.rollConfig.
+	if (!cardData?.actorId || !cardData?.itemId) {
+		const rc = message.flags?.shadowdark?.rollConfig;
+		const itemUuid = rc?.itemUuid || rc?.cast?.spellUuid;
+		if (rc?.actorId && itemUuid) {
+			cardData = { actorId: rc.actorId, itemId: itemUuid.split(".").pop() };
+			console.log(`${MODULE_ID} | injectDamageCard SD4 fallback engaged: actorId=${cardData.actorId} itemId=${cardData.itemId}`);
+		}
+	}
 
 	if (cardData?.actorId && cardData?.itemId) {
 
@@ -1933,9 +1943,23 @@ export async function injectDamageCard(message, html, data) {
 	// Note: Potions and Scrolls don't have successful roll requirements (they always succeed when used)
 	// Wands DO have spell rolls, so they need the success check
 	if (useTemplateTargeting && !["Potion", "Scroll"].includes(itemType)) {
+		// Legacy SD 3.x: flags.shadowdark.rolls.main.success
 		const shadowdarkRolls = message.flags?.shadowdark?.rolls;
 		const mainRoll = shadowdarkRolls?.main;
-		if (!mainRoll || mainRoll.success !== true) {
+		let isMainRollSuccess = mainRoll?.success === true;
+
+		// SD 4.x fallback: rolls.main no longer exists. Compute success from total vs DC.
+		if (!mainRoll) {
+			const rc = message.flags?.shadowdark?.rollConfig?.mainRoll;
+			const dc = rc?.dc;
+			const total = message.rolls?.[0]?.total;
+			if (typeof dc === "number" && typeof total === "number") {
+				isMainRollSuccess = total >= dc;
+				console.log(`${MODULE_ID} | template gate SD4 success: total=${total} dc=${dc} -> ${isMainRollSuccess}`);
+			}
+		}
+
+		if (!isMainRollSuccess) {
 			useTemplateTargeting = false;
 		}
 	}

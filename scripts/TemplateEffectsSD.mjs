@@ -1305,13 +1305,28 @@ async function createTemplateEffectMessage(templateDoc, token, trigger, result) 
 // ============================================
 
 /**
+ * v14 helper: force-compute a placeable template's .shape (lazy in v14).
+ * Returns true if shape is ready after the call.
+ */
+function ensureTemplateShape(template) {
+    if (!template) return false;
+    if (template.shape) return true;
+    if (typeof template._refreshShape === "function") {
+        try { template._refreshShape(); } catch (e) {
+            console.warn(`${MODULE_ID} | _refreshShape failed:`, e);
+        }
+    }
+    return !!template.shape;
+}
+
+/**
  * Get all tokens currently inside a template
  * @param {MeasuredTemplateDocument} templateDoc - The template document
  * @returns {Token[]} Array of tokens inside the template
  */
 export function getTokensInTemplate(templateDoc) {
     const template = templateDoc.object;
-    if (!template?.shape) return [];
+    if (!ensureTemplateShape(template)) return [];
 
     const tokens = [];
     const scene = templateDoc.parent;
@@ -1344,7 +1359,7 @@ export function getTemplatesContainingToken(token) {
 
     for (const templateDoc of canvas.scene.templates) {
         const template = templateDoc.object;
-        if (!template?.shape) continue;
+        if (!ensureTemplateShape(template)) continue;
 
         const localX = token.center.x - template.x;
         const localY = token.center.y - template.y;
@@ -1372,7 +1387,7 @@ function getTemplatesContainingPoint(x, y, scene) {
 
     for (const templateDoc of scene.templates) {
         const template = templateDoc.object;
-        if (!template?.shape) continue;
+        if (!ensureTemplateShape(template)) continue;
 
         const localX = x - template.x;
         const localY = y - template.y;

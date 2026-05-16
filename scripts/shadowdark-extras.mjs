@@ -19817,28 +19817,37 @@ SDX.templates = {
 			// This prevents previously targeted tokens from interfering with template targeting
 			forceClearTargets();
 
-			// Create the template document
-			const doc = new MeasuredTemplateDocument(templateData, { parent: canvas.scene });
-
-			// Create the template object for preview
-			const template = new CONFIG.MeasuredTemplate.objectClass(doc);
-
-			// Add to preview layer and draw
-			canvas.templates.preview.addChild(template);
-			template.draw();
-
-			// Initial position - use caster position if originFromCaster, otherwise mouse position
+			// Initial position - use caster position if originFromCaster, otherwise mouse position.
+			// v14: must be on templateData BEFORE constructing the doc so the shape computes during draw().
 			let initialPos;
 			if (originFromCaster) {
 				initialPos = { x: originFromCaster.x, y: originFromCaster.y };
 			} else {
-				initialPos = canvas.app.renderer.events.pointer.getLocalPosition(canvas.stage);
+				try {
+					initialPos = canvas.app.renderer.events.pointer.getLocalPosition(canvas.stage);
+				} catch {
+					initialPos = { x: 0, y: 0 };
+				}
 			}
-			template.document.updateSource({
-				x: initialPos.x,
-				y: initialPos.y
-			});
-			template.renderFlags.set({ refresh: true });
+			templateData.x = initialPos.x;
+			templateData.y = initialPos.y;
+
+			// Create the template document (v14 namespace with v13 fallback)
+			const MTDocClass = foundry.documents?.MeasuredTemplateDocument || MeasuredTemplateDocument;
+			const doc = new MTDocClass(templateData, { parent: canvas.scene });
+
+			// Create the template object for preview
+			const template = new CONFIG.MeasuredTemplate.objectClass(doc);
+
+			// Add to preview layer, then await draw before activating layer / refreshing
+			// (v14: template.draw() is async; not awaiting leaves shape=null and the preview invisible)
+			canvas.templates.preview.addChild(template);
+			template.draw().then(() => {
+				if (resolved) return;
+				if (canvas.activeLayer !== canvas.templates) canvas.templates.activate();
+				template.renderFlags.set({ refresh: true });
+				updateTokenHighlighting();
+			}).catch(err => console.error(`${MODULE_ID} | template.draw() failed:`, err));
 			// Throttle token highlighting to 15fps for performance
 			let lastHighlightTime = 0;
 			const HIGHLIGHT_THROTTLE = 1000 / 15; // 15fps
@@ -19882,6 +19891,10 @@ SDX.templates = {
 			// Function to highlight tokens inside the template preview
 			// Uses visual-only highlighting that does NOT affect game.user.targets
 			const updateTokenHighlighting = () => {
+				// v14: preview placeable's .shape is lazy — refresh if missing
+				if (!template.shape && typeof template._refreshShape === "function") {
+					try { template._refreshShape(); } catch {}
+				}
 				if (!template.shape) return;
 
 				const tokensInTemplate = new Set();
@@ -20180,6 +20193,15 @@ SDX.templates = {
 		const templateObject = templateDoc.object;
 		const templateElevation = templateDoc.elevation || 0;
 
+		// v14: placeable doesn't auto-compute .shape on doc creation; force it before testPoint
+		if (!templateObject.shape && typeof templateObject._refreshShape === "function") {
+			try { templateObject._refreshShape(); } catch (e) { console.warn(`${MODULE_ID} | _refreshShape failed:`, e); }
+		}
+		if (!templateObject.shape) {
+			console.warn(`${MODULE_ID} | getTokensInTemplate: shape still null after refresh; returning []`);
+			return [];
+		}
+
 		return canvas.tokens.placeables.filter(t => {
 			// Check elevation match
 			const tokenElevation = t.document.elevation || 0;
@@ -20206,9 +20228,9 @@ SDX.templates = {
 			return { template: null, tokens: [] };
 		}
 
-		// Wait a tick for the template object to be ready
-		await new Promise(r => setTimeout(r, 100));
-
+		// Wait one tick for the placeable to be attached, then force-compute its shape.
+		// (v14: placeable.shape is lazy and not auto-computed; getTokensInTemplate will _refreshShape internally)
+		await new Promise(r => setTimeout(r, 50));
 		let tokens = this.getTokensInTemplate(template);
 
 		// Filter out caster if excludeCasterTokenId is set
