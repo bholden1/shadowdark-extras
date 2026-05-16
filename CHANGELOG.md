@@ -4,6 +4,79 @@ All notable changes to this fork of `shadowdark-extras` are documented here.
 
 Format based loosely on [Keep a Changelog](https://keepachangelog.com/).
 
+## [6.9.2] — 2026-05-15 — v14 polish & follow-up fixes
+
+Follow-up release that cleans up issues surfaced after 6.9.1.
+
+### Fixed — Runtime correctness
+
+- **Audit cleanup**: removed three dead-code prototype patches targeting
+  ActorSD methods that no longer exist in SD 4.x (`buildWeaponDisplay`
+  ×2, `getExtraDamageDiceForWeapon`). They were silently no-op'ing
+  behind guards; deleted ~190 lines of unreachable code.
+- **`applyDamage` socket call fixed**: an old call site invoked
+  `executeAsGM("applyDamage", tokenId, damage, actorName)` against a
+  handler name that was never registered. Routed through the existing
+  `applyTokenDamage` handler with the proper `{ tokenId, damage,
+  actorName }` shape so player damage-application actually reaches
+  the GM in multiplayer.
+- **Freya's Omen reroll button migrated** to v14's
+  `renderChatMessageHTML` hook. The previous chat-hook migration
+  pass missed this one; vanilla DOM rewrite of the jQuery-based
+  handler.
+- **jQuery method calls on HTMLElement** fixed in three more chat
+  hook handlers that the v14 hook-name migration left half-finished:
+  - `shadowdark-extras.mjs` weapon-macro chat trigger — vanilla DOM
+    rewrite of `html.find('.chat-card').data()`.
+  - `CombatSettingsSD.mjs` `injectDamageCard` — re-wrap with `$()` at
+    function entry so the existing 30+ jQuery calls inside keep
+    working (pragmatic minimal-change fix vs rewriting them all).
+  - `FocusSpellTrackerSD.mjs` `handleWandUsesTracking` — vanilla DOM
+    rewrite of chat-card lookup.
+
+### Fixed — Console noise
+
+- **Restored GSAP + PixiPlugin** (`greensock/dist/gsap.min.js` and
+  `PixiPlugin.min.js`, version 3.12.5). An earlier "GSAP cleanup"
+  commit removed the bundled library but left five `gsap.*` call
+  sites in `JournalPinsSD.mjs` (ripple, scale, brightness tweens) —
+  every journal pin click threw `ReferenceError: gsap is not
+  defined`.
+- **Migrated 12 v13-deprecated global namespaces** that fire
+  per-boot deprecation warnings and will hard-break in Foundry v15:
+  - `Actors` / `Items` (sheet registrations) →
+    `foundry.documents.collections.Actors` / `.Items`
+  - `WallsLayer` / `Wall` (libWrapper paths in WallContextMenuSD) →
+    `foundry.canvas.layers.WallsLayer` / `foundry.canvas.placeables.Wall`
+  - `FilePicker` (HexPainter custom tile loading) →
+    `foundry.applications.apps.FilePicker.implementation`
+- **Three SDX-emitted info-level warnings downgraded** to
+  `console.log`: TomSocketHandler init message and HexPainter's
+  graceful-fallback messages when FilePicker permission isn't
+  available during early boot.
+- **HexPainter custom tile loaders now early-return for non-GMs**.
+  FilePicker.browse requires GM permission; non-GMs were previously
+  hitting a try/catch fallback that produced two warnings each load.
+
+### Cleanup
+
+- Removed stale `// TODO: Update this if ItemSD.prototype.rollItem
+  signature changed in 4.x` comment after verifying the signature
+  matches SD 4.x's `async rollItem(parts, data, options={})`.
+
+### Known remaining
+
+Boot console will still show ~10 warnings, all third-party:
+- PixiJS DisplacementFilter deprecation (library internal)
+- Shadowdark system's own V1 Application warnings (LightSourceTrackerSD,
+  EffectPanelSD) and ActiveEffect mode-vs-type deprecations
+- TokenMagic 0.8.1's `autoTemplateSettings` regression
+- obs-utils manifest `manifestPlusVersion` key warning
+
+Zero SDX-attributed warnings on a fresh world load.
+
+---
+
 ## [6.9.1] — 2026-05-15 — Foundry v14 / Shadowdark 4.0.x compatibility
 
 This series of changes brings the module forward from its last upstream release
