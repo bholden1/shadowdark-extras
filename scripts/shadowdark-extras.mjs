@@ -17588,99 +17588,99 @@ Hooks.once("init", () => {
 	// Define ability advantage effects for each ability score
 	const abilityAdvantageEffects = {
 		abilityAdvantageStr: {
-			defaultValue: "str",
-			effectKey: "system.bonuses.advantage",
+			defaultValue: 1,
+			effectKey: "system.roll.stat.advantage.str",
 			img: "icons/skills/melee/hand-grip-staff-yellow-brown.webp",
 			name: "SHADOWDARK.item.effect.predefined_effect.abilityAdvantageStr",
 			mode: "CONST.ACTIVE_EFFECT_MODES.ADD",
 		},
 		abilityAdvantageDex: {
-			defaultValue: "dex",
-			effectKey: "system.bonuses.advantage",
+			defaultValue: 1,
+			effectKey: "system.roll.stat.advantage.dex",
 			img: "icons/skills/movement/feet-winged-boots-glowing-yellow.webp",
 			name: "SHADOWDARK.item.effect.predefined_effect.abilityAdvantageDex",
 			mode: "CONST.ACTIVE_EFFECT_MODES.ADD",
 		},
 		abilityAdvantageCon: {
-			defaultValue: "con",
-			effectKey: "system.bonuses.advantage",
+			defaultValue: 1,
+			effectKey: "system.roll.stat.advantage.con",
 			img: "icons/magic/life/heart-area-circle-red-green.webp",
 			name: "SHADOWDARK.item.effect.predefined_effect.abilityAdvantageCon",
 			mode: "CONST.ACTIVE_EFFECT_MODES.ADD",
 		},
 		abilityAdvantageInt: {
-			defaultValue: "int",
-			effectKey: "system.bonuses.advantage",
+			defaultValue: 1,
+			effectKey: "system.roll.stat.advantage.int",
 			img: "icons/commodities/gems/gem-faceted-navette-blue.webp",
 			name: "SHADOWDARK.item.effect.predefined_effect.abilityAdvantageInt",
 			mode: "CONST.ACTIVE_EFFECT_MODES.ADD",
 		},
 		abilityAdvantageWis: {
-			defaultValue: "wis",
-			effectKey: "system.bonuses.advantage",
+			defaultValue: 1,
+			effectKey: "system.roll.stat.advantage.wis",
 			img: "icons/magic/perception/eye-ringed-glow-angry-large-teal.webp",
 			name: "SHADOWDARK.item.effect.predefined_effect.abilityAdvantageWis",
 			mode: "CONST.ACTIVE_EFFECT_MODES.ADD",
 		},
 		abilityAdvantageCha: {
-			defaultValue: "cha",
-			effectKey: "system.bonuses.advantage",
+			defaultValue: 1,
+			effectKey: "system.roll.stat.advantage.cha",
 			img: "icons/magic/light/orbs-hand-sparkle-yellow.webp",
 			name: "SHADOWDARK.item.effect.predefined_effect.abilityAdvantageCha",
 			mode: "CONST.ACTIVE_EFFECT_MODES.ADD",
 		},
 		abilityDisadvantageStr: {
-			defaultValue: "str",
-			effectKey: "system.bonuses.disadvantage",
+			defaultValue: -1,
+			effectKey: "system.roll.stat.advantage.str",
 			img: "icons/skills/wounds/bone-broken-hand.webp",
 			name: "SHADOWDARK.item.effect.predefined_effect.abilityDisadvantageStr",
 			mode: "CONST.ACTIVE_EFFECT_MODES.ADD",
 		},
 		abilityDisadvantageDex: {
-			defaultValue: "dex",
-			effectKey: "system.bonuses.disadvantage",
+			defaultValue: -1,
+			effectKey: "system.roll.stat.advantage.dex",
 			img: "icons/skills/movement/feet-winged-boots-glowing-yellow.webp",
 			name: "SHADOWDARK.item.effect.predefined_effect.abilityDisadvantageDex",
 			mode: "CONST.ACTIVE_EFFECT_MODES.ADD",
 		},
 		abilityDisadvantageCon: {
-			defaultValue: "con",
-			effectKey: "system.bonuses.disadvantage",
+			defaultValue: -1,
+			effectKey: "system.roll.stat.advantage.con",
 			img: "icons/magic/life/heart-black-red.webp",
 			name: "SHADOWDARK.item.effect.predefined_effect.abilityDisadvantageCon",
 			mode: "CONST.ACTIVE_EFFECT_MODES.ADD",
 		},
 		abilityDisadvantageInt: {
-			defaultValue: "int",
-			effectKey: "system.bonuses.disadvantage",
+			defaultValue: -1,
+			effectKey: "system.roll.stat.advantage.int",
 			img: "icons/commodities/gems/gem-broken-red.webp",
 			name: "SHADOWDARK.item.effect.predefined_effect.abilityDisadvantageInt",
 			mode: "CONST.ACTIVE_EFFECT_MODES.ADD",
 		},
 		abilityDisadvantageWis: {
-			defaultValue: "wis",
-			effectKey: "system.bonuses.disadvantage",
+			defaultValue: -1,
+			effectKey: "system.roll.stat.advantage.wis",
 			img: "icons/magic/perception/eye-ringed-glow-angry-small-red.webp",
 			name: "SHADOWDARK.item.effect.predefined_effect.abilityDisadvantageWis",
 			mode: "CONST.ACTIVE_EFFECT_MODES.ADD",
 		},
 		abilityDisadvantageCha: {
-			defaultValue: "cha",
-			effectKey: "system.bonuses.disadvantage",
+			defaultValue: -1,
+			effectKey: "system.roll.stat.advantage.cha",
 			img: "icons/magic/light/hand-sparks-smoke-teal.webp",
 			name: "SHADOWDARK.item.effect.predefined_effect.abilityDisadvantageCha",
 			mode: "CONST.ACTIVE_EFFECT_MODES.ADD",
 		},
 		meleeAdvantage: {
-			defaultValue: "melee",
-			effectKey: "system.bonuses.advantage",
+			defaultValue: 1,
+			effectKey: "system.roll.melee.advantage.all",
 			img: "icons/skills/melee/weapons-crossed-swords-yellow.webp",
 			name: "SHADOWDARK.item.effect.predefined_effect.meleeAdvantage",
 			mode: "CONST.ACTIVE_EFFECT_MODES.ADD",
 		},
 		rangedAdvantage: {
-			defaultValue: "ranged",
-			effectKey: "system.bonuses.advantage",
+			defaultValue: 1,
+			effectKey: "system.roll.ranged.advantage.all",
 			img: "icons/skills/ranged/bow-arrow-shooting-gray.webp",
 			name: "SHADOWDARK.item.effect.predefined_effect.rangedAdvantage",
 			mode: "CONST.ACTIVE_EFFECT_MODES.ADD",
@@ -17735,22 +17735,22 @@ Hooks.once("init", () => {
 			mode: "CONST.ACTIVE_EFFECT_MODES.OVERRIDE",
 		},
 		spellAdvantageAll: {
-			defaultValue: "spellcasting",
-			effectKey: "system.bonuses.advantage",
+			defaultValue: 1,
+			effectKey: "system.roll.spell.advantage.all",
 			img: "icons/magic/symbols/chevron-elipse-circle-blue.webp",
 			name: "SHADOWDARK.item.effect.predefined_effect.spellAdvantageAll",
 			mode: "CONST.ACTIVE_EFFECT_MODES.ADD",
 		},
 		spellDisadvantageAll: {
-			defaultValue: "spellcasting",
-			effectKey: "system.bonuses.disadvantage",
+			defaultValue: -1,
+			effectKey: "system.roll.spell.advantage.all",
 			img: "icons/magic/unholy/hand-light-pink.webp",
 			name: "SHADOWDARK.item.effect.predefined_effect.spellDisadvantageAll",
 			mode: "CONST.ACTIVE_EFFECT_MODES.ADD",
 		},
 		spellDisadvantage: {
-			defaultValue: "REPLACEME",
-			effectKey: "system.bonuses.disadvantage",
+			defaultValue: -1,
+			effectKey: "system.roll.spell.advantage.REPLACEME",
 			img: "icons/magic/unholy/hand-light-pink.webp",
 			name: "SHADOWDARK.item.effect.predefined_effect.spellDisadvantage",
 			mode: "CONST.ACTIVE_EFFECT_MODES.ADD",
@@ -17953,12 +17953,15 @@ Hooks.once("init", () => {
 		return originalHandlePredefinedEffect.call(this, key, value, name);
 	};
 
-	// Patch modifyEffectChangesWithInput to map disadvantage -> spellDisadvantage
-	// This ensures that Talents with system.bonuses.disadvantage = REPLACEME
-	// trigger the spell selection choice.
+	// Patch modifyEffectChangesWithInput to map disadvantage -> spellDisadvantage.
+	// SD 4.x renamed the AE change key from `system.bonuses.disadvantage` to
+	// `system.roll.spell.advantage.REPLACEME` (with negative value for disadvantage).
+	// Detect that pattern and route to SDX's spell-picker handler.
 	const originalModifyEffectChangesWithInput = shadowdark.effects.modifyEffectChangesWithInput;
 	shadowdark.effects.modifyEffectChangesWithInput = async function (item, effect, key = false) {
-		if (!key && effect.changes?.some(c => c.key === "system.bonuses.disadvantage" && c.value === "REPLACEME")) {
+		if (!key && effect.changes?.some(c =>
+			c.key === "system.roll.spell.advantage.REPLACEME" && Number(c.value) < 0
+		)) {
 			key = "spellDisadvantage";
 		}
 		return originalModifyEffectChangesWithInput.call(this, item, effect, key);
