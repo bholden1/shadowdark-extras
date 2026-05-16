@@ -1313,6 +1313,36 @@ export function setupScrollingCombatText() {
 		}
 	});
 
+	// Auto-mark actors as defeated/dead when HP drops to 0.
+	// SD 4.x's ActorSD._onUpdate no longer calls _setDefeated() — only animates the HP delta.
+	// The _setDefeated() prototype method still exists and is correct (marks combatant.defeated
+	// + applies "dead" status overlay for NPCs / "prone"+"unconscious" for Players),
+	// it just isn't being invoked anymore. This hook restores the pre-v4 behavior.
+	Hooks.on("updateActor", async (actor, changes, options, userId) => {
+		// GM-only to avoid duplicate combatant updates from each client
+		if (!game.user.isGM) return;
+		if (userId !== game.user.id) return;
+
+		const newHp = foundry.utils.getProperty(changes, "system.attributes.hp.value");
+		if (newHp === undefined) return;
+		if (newHp > 0) return;
+
+		// Only fire when HP actually transitioned to 0 from a positive value
+		const key = actor.isToken ? `token-${actor.token?.id}` : `actor-${actor.id}`;
+		// _preUpdateHp may have been cleared by the scrolling-text hook above; fall back to current
+		// (post-update) HP if we don't have a record (e.g., direct sheet edit). Skip in that case.
+		// To be safe, just call _setDefeated unconditionally on HP === 0 — it's idempotent
+		// (toggleStatusEffect with active:true is a no-op if already applied).
+
+		if (typeof actor._setDefeated === "function") {
+			try {
+				await actor._setDefeated();
+			} catch (err) {
+				console.error(`${MODULE_ID} | _setDefeated failed for ${actor.name}:`, err);
+			}
+		}
+	});
+
 }
 
 // Track which messages have already spawned creatures (in-memory cache)
