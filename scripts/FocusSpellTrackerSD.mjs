@@ -13,6 +13,7 @@
  */
 
 import { getSocket } from "./CombatSettingsSD.mjs";
+import { resolveCardContext } from "./sd4Compat.mjs";
 
 const MODULE_ID = "shadowdark-extras";
 
@@ -111,10 +112,9 @@ async function handleChatMessageRender(message, html, context) {
 	const rollConfig = sdFlags?.rollConfig;
 	if (!rollConfig) return;
 
-	// Get actor and item IDs from the chat card HTML or rollConfig
-	const chatCard = html.querySelector('.chat-card');
-	const actorId = rollConfig.actorId || chatCard?.dataset.actorId;
-	const itemUuid = rollConfig.itemUuid || chatCard?.dataset.itemId; // In v4 itemId often holds UUID
+	const cardCtx = resolveCardContext(message, html);
+	const actorId = cardCtx?.actorId;
+	const itemUuid = cardCtx?.itemUuid || cardCtx?.itemId;
 
 	if (!actorId) return;
 
@@ -2842,18 +2842,11 @@ async function handleWandUsesTracking(message, html, data) {
 	const sdFlags = message.flags?.shadowdark;
 	if (!sdFlags?.isRoll) return;
 
-	// Get actor and item IDs from the chat card HTML
-	// v14: html is a raw HTMLElement
-	const chatCard = html.querySelector('.chat-card');
-	if (!chatCard) return;
+	const cardCtx = resolveCardContext(message, html);
+	if (!cardCtx?.actorId || !cardCtx?.itemId) return;
 
-	const actorId = chatCard.dataset?.actorId;
-	const itemId = chatCard.dataset?.itemId;
-
-	if (!actorId || !itemId) return;
-
-	const actor = game.actors.get(actorId);
-	const item = actor?.items.get(itemId);
+	const actor = game.actors.get(cardCtx.actorId);
+	const item = actor?.items.get(cardCtx.itemId);
 
 	if (!actor || !item) return;
 
