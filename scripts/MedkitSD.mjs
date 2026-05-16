@@ -198,7 +198,7 @@ export class MedkitApp extends HandlebarsApplicationMixin(ApplicationV2) {
         const cleanActor = this._cleanData(actorItem.toObject());
         const cleanComp = this._cleanData(compendiumItem.toObject());
 
-        const isDiff = !foundry.utils.objectsEqual(cleanActor, cleanComp);
+        const isDiff = !foundry.utils.equals(cleanActor, cleanComp);
 
         if (isDiff) {
             const diff = foundry.utils.diffObject(cleanActor, cleanComp);

@@ -975,7 +975,7 @@ export function toggleTileSelection(tilePath) {
                 } else if (_previewSprite) {
                     // Update texture to current tile
                     const currentPath = availableTiles[_currentPreviewIndex % availableTiles.length];
-                    loadTexture(currentPath).then(texture => {
+                    foundry.canvas.loadTexture(currentPath).then(texture => {
                         if (texture && _previewSprite) {
                             _previewSprite.texture = texture;
                             _previewSprite._sdxTexturePath = currentPath;
@@ -1263,7 +1263,7 @@ function _onRightClick(ev) {
     // Update preview texture
     if (_previewEnabled && _previewSprite) {
         const nextPath = availableTiles[_currentPreviewIndex % availableTiles.length];
-        loadTexture(nextPath).then(texture => {
+        foundry.canvas.loadTexture(nextPath).then(texture => {
             if (texture && _previewSprite) {
                 _previewSprite.texture = texture;
                 _previewSprite._sdxTexturePath = nextPath;
@@ -1376,7 +1376,7 @@ async function _stampAtPointer(ev, forceStamp = false) {
     if (isSymbolTile) {
         // For symbols, get original image size and scale by _poiScale
         try {
-            const img = await loadTexture(chosenTile);
+            const img = await foundry.canvas.loadTexture(chosenTile);
             tw = Math.floor(img.width * _poiScale);
             th = Math.floor(img.height * _poiScale);
         } catch (e) {
@@ -1525,7 +1525,7 @@ async function _stampAtPointer(ev, forceStamp = false) {
             const availablePoiTiles = _getAvailablePoiTiles();
             if (availablePoiTiles.length > 0) {
                 const nextPath = availablePoiTiles[_currentPreviewIndex % availablePoiTiles.length];
-                loadTexture(nextPath).then(texture => {
+                foundry.canvas.loadTexture(nextPath).then(texture => {
                     if (texture && _previewSprite) {
                         _previewSprite.texture = texture;
                         _previewSprite._sdxTexturePath = nextPath;
@@ -1807,7 +1807,7 @@ export async function createPreview() {
     // Load texture for the first tile
     const tilePath = availableTiles[_currentPreviewIndex % availableTiles.length];
     try {
-        const texture = await loadTexture(tilePath);
+        const texture = await foundry.canvas.loadTexture(tilePath);
         if (texture) {
             _previewSprite = new PIXI.Sprite(texture);
             _previewSprite.anchor.set(0.5, 0.5);
@@ -1849,7 +1849,7 @@ export async function updatePreviewPosition(pos) {
     const currentPath = availableTiles[_currentPreviewIndex % availableTiles.length];
     if (_previewSprite._sdxTexturePath !== currentPath) {
         try {
-            const texture = await loadTexture(currentPath);
+            const texture = await foundry.canvas.loadTexture(currentPath);
             if (texture) {
                 _previewSprite.texture = texture;
                 _previewSprite._sdxTexturePath = currentPath;

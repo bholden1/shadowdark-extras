@@ -4,6 +4,51 @@ All notable changes to this fork of `shadowdark-extras` are documented here.
 
 Format based loosely on [Keep a Changelog](https://keepachangelog.com/).
 
+## [6.9.3] — 2026-05-15 — more v14 deprecation cleanup
+
+Follow-up to 6.9.2 — cleans up deprecation warnings surfaced when
+actually exercising features (POI tile sort, journal pin hover,
+marching-mode dialogs, hex painter preview).
+
+### Fixed — v14/v15/v16 deprecation warnings
+
+- **`loadTexture` global** (V15 removal) — 6 call sites in
+  `HexPainterSD.mjs` migrated to `foundry.canvas.loadTexture`. Fires on
+  every POI tile preview and stamp.
+- **`foundry.utils.objectsEqual`** (V16 removal) — renamed to
+  `foundry.utils.equals` in `JournalPinsSD.mjs` (hot path: every pin
+  click and hover) and `MedkitSD.mjs`.
+- **`PoiTileSortApp` migrated to ApplicationV2** — was extending V1
+  `Application`. Converted defaults to `DEFAULT_OPTIONS` / `PARTS`,
+  `getData` → `_prepareContext`, `activateListeners` → `_onRender`,
+  `this.element[0]` → `this.element` (HTMLElement, not jQuery).
+- **`MarchingModeSD.mjs` three V1 `Dialog`s migrated to `DialogV2`**:
+  - `showLeaderDialog` (set party leader)
+  - `showMovementModeDialog` (free/marching toggle with clickable
+    option boxes)
+  - SDX Pins menu (add pin / pin list)
+  Button callbacks now use `(event, button, dialog)` signature; form
+  values read via `button.form.elements.<name>.value`; the
+  movement-mode option click wiring runs after `dialog.render(...).then(...)`.
+
+### Fixed — Runtime correctness
+
+- **GSAP PixiPlugin now registered** at JournalPinsSD module load.
+  Without registration, GSAP warned `Invalid property pixi set to
+  {brightness, hue}` on every pin hover/leave and silently no-op'd the
+  filter tweens. PixiPlugin was already bundled in 6.9.2 but never
+  initialized — pin brightness/hue effects are now actually visible.
+
+### Known remaining
+
+- ~25 more V1 `new Dialog(...)` call sites across the codebase
+  (Party sheet, Combat settings, Trade window, etc.). V16 removal —
+  not urgent; will migrate opportunistically.
+- Third-party warnings unchanged from 6.9.2 (PixiJS, SD system V1
+  Apps, TokenMagic 0.8.1, obs-utils manifest).
+
+---
+
 ## [6.9.2] — 2026-05-15 — v14 polish & follow-up fixes
 
 Follow-up release that cleans up issues surfaced after 6.9.1.

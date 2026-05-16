@@ -7,6 +7,15 @@ const MODULE_ID = "shadowdark-extras";
 const FLAG_KEY = "journalPins";
 const LAYER_NAME = "sdx-journal-pins-layer";
 
+// GSAP PixiPlugin registration. Without this, tweens of the `pixi` property
+// (brightness/hue filters) warn "Missing plugin? gsap.registerPlugin()" on every
+// hover. Scripts (gsap.min.js, PixiPlugin.min.js) load before esmodules, so the
+// globals are available at module-load time. PIXI is a Foundry global.
+if (window.gsap && window.PixiPlugin) {
+    window.gsap.registerPlugin(window.PixiPlugin);
+    if (window.PIXI) window.PixiPlugin.registerPIXI(window.PIXI);
+}
+
 // ================================================================
 // PIN SCHEMA & DEFAULTS
 // ================================================================
@@ -1721,7 +1730,7 @@ class JournalPinGraphics extends PIXI.Container {
         // BUT: Always check TMFX flags if we have them, as shaders might need refresh
         const hasTMFX = !!(this.pinData.flags?.tokenmagic || newData.flags?.tokenmagic);
 
-        if (!hasTMFX && foundry.utils.objectsEqual(this.pinData, newData)) {
+        if (!hasTMFX && foundry.utils.equals(this.pinData, newData)) {
             return;
         }
 
