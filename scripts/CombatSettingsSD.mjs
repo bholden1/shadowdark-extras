@@ -4066,10 +4066,20 @@ async function buildDamageCardHtml(actor, targets, totalDamage, damageType, allE
 		const buttonText = isHealing ? "APPLY HEALING" : "APPLY DAMAGE";
 		const buttonIcon = isHealing ? "fa-heart-pulse" : "fa-hand-sparkles";
 
+		// v14/SD4.x: Reflect already-applied state in DOM so re-renders don't reset the
+		// button. Same pattern as the condition button — prevents double-apply when the
+		// user clicks after the auto-apply ran on first render.
+		const damageApplied = !!message?.getFlag?.(MODULE_ID, "damageApplied");
+		const damageBtnText = damageApplied
+			? `<i class="fas fa-check"></i> APPLIED`
+			: `<i class="fas ${buttonIcon}"></i> ${buttonText}`;
+		const damageBtnDisabled = damageApplied ? 'disabled' : '';
+		const damageBtnAppliedAttr = damageApplied ? 'data-already-applied="true"' : '';
+
 		applyButtonHtml = `
 							<div class="sdx-damage-actions">
-								<button type="button" class="sdx-apply-damage-btn" data-damage-type="${damageType}">
-									<i class="fas ${buttonIcon}"></i> ${buttonText}
+								<button type="button" class="sdx-apply-damage-btn" data-damage-type="${damageType}" ${damageBtnAppliedAttr} ${damageBtnDisabled}>
+									${damageBtnText}
 								</button>
 						`;
 	}
@@ -4095,14 +4105,25 @@ async function buildDamageCardHtml(actor, targets, totalDamage, damageType, allE
 			applyButtonHtml = '<div class="sdx-damage-actions">';
 		}
 
+		// v14/SD4.x: Reflect already-applied state in DOM so re-renders don't reset the button.
+		// Prevents the double-apply bug where the auto-click ran on first render, then a manual
+		// click after a re-render fires the handler again on a "fresh" button.
+		const conditionsApplied = !!message?.getFlag?.(MODULE_ID, "conditionsApplied");
+		const conditionBtnText = conditionsApplied
+			? '<i class="fas fa-check"></i> APPLIED'
+			: '<i class="fas fa-wand-sparkles"></i> APPLY CONDITION';
+		const conditionBtnDisabled = conditionsApplied ? 'disabled' : '';
+		const conditionBtnAppliedAttr = conditionsApplied ? 'data-already-applied="true"' : '';
+
 		applyButtonHtml += `
 						<button type="button" class="sdx-apply-condition-btn"
 					data-effects='${effectsJson}'
 					data-apply-to-target="${effectsApplyToTarget}"
 					data-effects-requirement="${effectsRequirement.replace(/"/g, '&quot;')}"
 					data-spell-info="${spellInfoJson}"
-					data-effect-selection-mode="${spellDamageConfig?.effectSelectionMode || 'all'}">
-						<i class="fas fa-wand-sparkles"></i> APPLY CONDITION
+					data-effect-selection-mode="${spellDamageConfig?.effectSelectionMode || 'all'}"
+					${conditionBtnAppliedAttr} ${conditionBtnDisabled}>
+						${conditionBtnText}
 			</button>
 						`;
 	}
@@ -4271,6 +4292,14 @@ function rebuildTargetsList($card, messageId, baseDamage) {
 		const effectsRequirement = $existingConditionBtn.attr('data-effects-requirement') || '';
 		const spellInfoData = $existingConditionBtn.attr('data-spell-info') || '';
 		const effectSelectionMode = $existingConditionBtn.attr('data-effect-selection-mode') || 'all';
+		// v14/SD4.x: Preserve applied state across tab rebuilds so the "APPLIED" indicator
+		// and double-click guard survive when the user switches Targeted/Selected tabs.
+		const alreadyApplied = $existingConditionBtn.attr('data-already-applied') === 'true';
+		const condBtnText = alreadyApplied
+			? '<i class="fas fa-check"></i> APPLIED'
+			: '<i class="fas fa-wand-sparkles"></i> APPLY EFFECTS';
+		const condBtnDisabled = alreadyApplied ? 'disabled' : '';
+		const condBtnAppliedAttr = alreadyApplied ? 'data-already-applied="true"' : '';
 
 		conditionButtonHtml = `
 			<button type="button" class="sdx-apply-condition-btn"
@@ -4278,8 +4307,9 @@ function rebuildTargetsList($card, messageId, baseDamage) {
 				data-apply-to-target="${applyToTarget}"
 				data-effects-requirement="${effectsRequirement}"
 				data-spell-info="${spellInfoData}"
-				data-effect-selection-mode="${effectSelectionMode}">
-				<i class="fas fa-wand-sparkles"></i> APPLY EFFECTS
+				data-effect-selection-mode="${effectSelectionMode}"
+				${condBtnAppliedAttr} ${condBtnDisabled}>
+				${condBtnText}
 			</button>`;
 	}
 
@@ -5132,6 +5162,18 @@ function attachDamageCardListeners(html, messageId) {
 			return;
 		}
 
+		// v14/SD4.x: Hard-block double-apply via persisted flag.
+		// jQuery handlers fire on disabled buttons through delegation, and re-renders
+		// reset the in-memory `applying` state — so the message flag is the source of
+		// truth. Once damage was applied (auto OR manual), refuse a second apply.
+		const messageDoc = game.messages.get(messageId);
+		if (messageDoc?.getFlag?.(MODULE_ID, "damageApplied") || $btn.attr('data-already-applied') === 'true') {
+			ui.notifications.info("Damage already applied to this card.");
+			$btn.prop('disabled', true);
+			$btn.html('<i class="fas fa-check"></i> APPLIED');
+			return;
+		}
+
 		$btn.data('applying', true);
 		$btn.prop('disabled', true);
 
@@ -5269,6 +5311,17 @@ function attachDamageCardListeners(html, messageId) {
 				const appliedText = isHealing ? 'Healing' : 'Damage';
 				ui.notifications.info(`${appliedText} applied to ${appliedCount} target(s)`);
 				$btn.html('<i class="fas fa-check"></i> APPLIED');
+				$btn.attr('data-already-applied', 'true');
+				// v14/SD4.x: Persist applied state so re-renders show "APPLIED" and the
+				// click handler refuses a second apply attempt.
+				try {
+					const persistMsg = game.messages.get(messageId);
+					if (persistMsg && !persistMsg.getFlag(MODULE_ID, "damageApplied")) {
+						await persistMsg.setFlag(MODULE_ID, "damageApplied", true);
+					}
+				} catch (flagErr) {
+					console.warn("shadowdark-extras | Failed to persist damageApplied flag:", flagErr);
+				}
 
 				// Decrement weapon bonus usage for bonuses that have limited uses
 				try {
@@ -5294,6 +5347,13 @@ function attachDamageCardListeners(html, messageId) {
 			}
 
 			setTimeout(() => {
+				// On successful apply, leave the button locked at "APPLIED" — re-enabling would
+				// invite a double-apply. Only restore the original label when nothing applied
+				// (user can fix targets and retry).
+				if (appliedCount > 0) {
+					$btn.data('applying', false);
+					return;
+				}
 				const damageType = $card.data('damage-type') || 'damage';
 				const buttonText = damageType === 'healing' ? 'APPLY HEALING' : 'APPLY DAMAGE';
 				const buttonIcon = damageType === 'healing' ? 'fa-heart-pulse' : 'fa-hand-sparkles';
@@ -5319,6 +5379,19 @@ function attachDamageCardListeners(html, messageId) {
 
 		// Prevent duplicate applications
 		if ($btn.data('applying')) {
+			return;
+		}
+
+		// v14/SD4.x: Hard-block double-apply.
+		// jQuery click handlers still fire on disabled <button>s via delegation, and chat
+		// message re-renders rebuild the DOM with a fresh `applying` data state — so the
+		// in-memory guard above is not enough. The persisted message flag is the source of
+		// truth: once conditions were applied (auto OR manual), refuse further applies.
+		const messageDoc = game.messages.get(messageId);
+		if (messageDoc?.getFlag?.(MODULE_ID, "conditionsApplied") || $btn.attr('data-already-applied') === 'true') {
+			ui.notifications.info("Conditions already applied to this card.");
+			$btn.prop('disabled', true);
+			$btn.html('<i class="fas fa-check"></i> APPLIED');
 			return;
 		}
 
@@ -5539,6 +5612,17 @@ function attachDamageCardListeners(html, messageId) {
 				}
 				ui.notifications.info(message);
 				$btn.html('<i class="fas fa-check"></i> APPLIED');
+				$btn.attr('data-already-applied', 'true');
+				// v14/SD4.x: Persist applied state so re-renders show "APPLIED" and the
+				// click handler refuses a second apply attempt.
+				try {
+					const messageDoc = game.messages.get(messageId);
+					if (messageDoc && !messageDoc.getFlag(MODULE_ID, "conditionsApplied")) {
+						await messageDoc.setFlag(MODULE_ID, "conditionsApplied", true);
+					}
+				} catch (flagErr) {
+					console.warn("shadowdark-extras | Failed to persist conditionsApplied flag:", flagErr);
+				}
 			} else if (skippedCount > 0) {
 				ui.notifications.warn(`No conditions applied - requirement not met for any target`);
 				$btn.html('<i class="fas fa-exclamation"></i> REQ FAILED');
