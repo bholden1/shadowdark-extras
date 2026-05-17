@@ -4,6 +4,51 @@ All notable changes to this fork of `shadowdark-extras` are documented here.
 
 Format based loosely on [Keep a Changelog](https://keepachangelog.com/).
 
+## [6.10.8] — 2026-05-17 — Dark-mode CSS hotfixes (chat text + pause font)
+
+Three CSS regressions in dark-mode that were visible since SD's 4.x
+update — neither newly introduced nor previously catalogued. All three
+are scoped to `body.sdx-dark-mode`, so non-dark-mode users were never
+affected.
+
+### Fixed — chat-card sub-headings now legible
+
+SD v4 renamed the chat-card markup; the "Attack Roll" / "Damage Roll"
+sub-headings now ship under `.chat-message .message-content .sub-heading`,
+which inherits the default chat-message text color. On SDX's dark
+damage-card background that read as dark-grey-on-dark.
+
+```css
+.chat-message .message-content .sub-heading { color: white; }
+```
+
+### Fixed — character name in chat header
+
+`.message-sender` (the speaker name on each chat card) was inheriting
+the same dark color and showed as black-on-dark in dark mode. The
+existing dark-mode rule already styled font-family / font-size; just
+added the missing `color: white`.
+
+### Fixed — "Game Paused" overlay font restored to JSL Blackletter
+
+`body.sdx-dark-mode` redefines `--font-header` to `"Montserrat-medium"`
+for SDX's own themed UI, but the SD system's `#pause figcaption` uses
+`var(--font-header)` directly, so the override cascaded onto the pause
+overlay and replaced SD's intended blackletter font with a plain
+sans-serif. Surgical restore:
+
+```css
+body.sdx-dark-mode #pause figcaption {
+    font-family: "JSL Blackletter", sans-serif;
+}
+```
+
+Specificity (0,1,1,1) cleanly overrides SD's `#pause figcaption`
+(0,1,0,1) only when dark mode is active. Vanilla SDX (no dark mode)
+remains unchanged.
+
+---
+
 ## [6.10.7] — 2026-05-17 — Preroll bonuses, healing-spell damage roll, chat card cleanup
 
 Four behaviour fixes from upstream dev (`e3f5de0`).

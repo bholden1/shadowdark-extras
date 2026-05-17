@@ -339,6 +339,14 @@ body.sdx-dark-mode {
     --font-header: "Montserrat-medium", sans-serif;
 }
 
+/* SDX dark-mode overrides --font-header globally to Montserrat for its own
+   themed UI, but that cascades to SD system selectors that explicitly use
+   `var(--font-header)` — most visibly #pause figcaption ("Game Paused" text),
+   which should stay in JSL Blackletter. Restore SD's intended pause font. */
+body.sdx-dark-mode #pause figcaption {
+    font-family: "JSL Blackletter", sans-serif;
+}
+
 body.sdx-dark-mode .sidebar-tab {
     box-shadow: none;
     background: rgb(17 17 17);
@@ -502,6 +510,7 @@ body.sdx-dark-mode .chat-portrait-text-size-name-generic {
 body.sdx-dark-mode .message-sender {
     font-family: "Montserrat-medium";
     font-size: 16px;
+    color: white;
 }
 
 

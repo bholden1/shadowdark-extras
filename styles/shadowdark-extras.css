@@ -18661,3 +18661,10 @@ footer.sdx-coords-footer {
 .window-header .header-control.fa-brands::before {
     font-family: var(--fa-font-brands) !important;
 }
+
+/* SD v4 chat-message sub-headings ("Attack Roll", "Damage Roll", "Targets")
+   inherit the default chat-message text color, which renders dark on the SDX
+   damage card's dark background. Force white. */
+.chat-message .message-content .sub-heading {
+    color: white;
+}
