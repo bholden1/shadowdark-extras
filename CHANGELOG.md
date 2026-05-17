@@ -4,6 +4,67 @@ All notable changes to this fork of `shadowdark-extras` are documented here.
 
 Format based loosely on [Keep a Changelog](https://keepachangelog.com/).
 
+## [6.10.7] — 2026-05-17 — Preroll bonuses, healing-spell damage roll, chat card cleanup
+
+Four behaviour fixes from upstream dev (`e3f5de0`).
+
+### Fixed — preroll dialog now shows weapon damage bonuses (`shadowdark-extras.mjs`)
+
+The "Attacking with Longsword" preroll dialog previously listed only
+hit bonuses. Damage bonuses (e.g. `Mighty (+1)`, `MAGIKA (+1d4)`) were
+applied silently to the final chat result, so the player had no way to
+see the expected damage range while choosing Advantage/Normal/Disadvantage.
+
+Now:
+- Damage bonuses are baked into the dialog's Damage Roll formula
+  (`1d8 + 1 + 1d4` instead of just `1d8`)
+- The tooltip line below the formula lists each contributing bonus
+  with its formula in parens — e.g. `Mighty (+1), MAGIKA (+ 1d4)`
+- The wrapper path that previously double-baked damage bonuses has
+  been removed; comment now points to `calculateWeaponBonusDamage()`
+  as the single source of truth
+
+### Fixed — healing spells no longer use d20 cast roll as damage (`CombatSettingsSD.mjs`)
+
+For spells like Cure Wounds, the damage-card pipeline was reading
+`message.rolls[message.rolls.length - 1]` as a fallback when no roll
+matched the damage formula. That fallback would grab the **d20 cast
+roll** (success/fail check) and use its value as the healing amount.
+
+Now the matcher returns `null` if no roll matches the formula, and a
+new pending-roll guard bails cleanly when `rollDamageFromMessage()`
+hasn't yet attached the async damage roll to `message.rolls`. The
+subsequent `msg.update({rolls})` re-render picks up the correct value.
+
+### Fixed — weapon damage bonus no longer double-counted in chat (`CombatSettingsSD.mjs`)
+
+When `renderRollDialogSD` bakes the damage bonus into the roll formula
+(so the preroll dialog displays the correct total), the final chat
+card was also calling `calculateWeaponBonusDamage()` and **adding the
+same bonus again**. Result: a +1 Mighty bonus contributed twice.
+
+Fixed by:
+- New `_sdxDamageBonusInFormula` / `sdxBonusInDamageFormula` config
+  flags signal upstream-baked bonuses
+- Persisted as `bonusInFormula` inside `weaponBonusResults` so the
+  final render can read it after DataModel serialisation strips
+  underscore-prefixed keys
+- When `bonusInFormula` is true, `totalDamage` only adds the
+  critical-hit bonus, not the regular bonus
+- `buildRollBreakdown()` also receives zeroed-out `bonusFormula` /
+  `bonusRollResults` so the UI doesn't render an extra breakdown term
+
+### Changed — SD chat card visually integrated with SDX card
+
+When the SDX damage card is shown, the SD chat card is now restructured
+in-place to reduce redundancy:
+- The weapon icon/name row is moved **above** the "Attack Roll" heading
+  so it reads as the card's header
+- The redundant Targets sub-section is hidden (SDX already lists targets)
+- The card gets an `.sdx-integrated` class hook for future CSS theming
+
+---
+
 ## [6.10.6] — 2026-05-17 — AE library expansion, multi-level dungeons, live weapon-anim preview
 
 Three feature drops bundled together; no breaking changes.
