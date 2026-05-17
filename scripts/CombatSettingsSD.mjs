@@ -4507,6 +4507,47 @@ function attachTargetEnableListeners($card) {
  * Spawn summoned creatures automatically when a spell is cast
  * @param {boolean} isCriticalSuccess - If true, duration will be doubled
  */
+/**
+ * Ensure a creature actor exists in game.actors before spawning.
+ * Compendium actors must be imported so item-piles' preCreateToken hook
+ * can resolve document.actor (which returns null for non-world actors).
+ * Returns the resolved world UUID, or the original UUID on failure.
+ */
+async function _resolveActorForSummon(uuid) {
+	if (!uuid) return uuid;
+
+	// Already a world actor — nothing to do.
+	const sync = fromUuidSync(uuid);
+	if (sync instanceof Actor && !sync.pack) return uuid;
+
+	// Try to import from compendium.
+	try {
+		const parts = uuid.split(".");
+		// Expected format: "Compendium.<scope>.<packName>.<docId>"
+		if (parts.length < 4) return uuid;
+
+		const packId = `${parts[1]}.${parts[2]}`;
+		const docId  = parts[parts.length - 1];
+		const pack   = game.packs.get(packId);
+		if (!pack) return uuid;
+
+		// Re-use an already-imported copy from this session if present.
+		const existing = game.actors.find(a =>
+			a.getFlag(MODULE_ID, "_sdxSummonSourceUuid") === uuid
+		);
+		if (existing) return existing.uuid;
+
+		const imported = await game.actors.importFromCompendium(pack, docId);
+		if (!imported) return uuid;
+
+		await imported.setFlag(MODULE_ID, "_sdxSummonSourceUuid", uuid);
+		return imported.uuid;
+	} catch (err) {
+		console.warn(`${MODULE_ID} | Could not import summon actor from compendium (${uuid}):`, err);
+		return uuid;
+	}
+}
+
 export async function spawnSummonedCreatures(casterActor, item, profiles, summoningConfig = {}, isCriticalSuccess = false) {
 
 	try {
@@ -4518,116 +4559,118 @@ export async function spawnSummonedCreatures(casterActor, item, profiles, summon
 
 		// Get the caster's token as the origin point
 		const casterToken = casterActor?.getActiveTokens()?.[0];
-
 		if (!casterToken) {
 			ui.notifications.warn("Could not find caster token on the scene");
 			return;
 		}
 
+		// Resolve the user who controls the caster actor so we grant ownership
+		// to the right player, not just whoever is running this code (usually GM).
+		const summonerUser = game.users.find(u => u.character?.id === casterActor.id);
+		const ownerUserId  = summonerUser?.id ?? game.user.id;
+
+		// Pre-resolve all creature UUIDs to world actors.
+		// item-piles' preCreateToken hook reads document.actor, which is null for
+		// compendium actors that haven't been imported. We import them first so
+		// game.actors.get(actorId) succeeds inside item-piles' hook.
+		const resolvedProfiles = [];
+		for (const profile of profiles) {
+			if (!profile.creatureUuid) {
+				console.warn(`${MODULE_ID} | Skipping summon profile with no UUID`);
+				continue;
+			}
+			const worldUuid = await _resolveActorForSummon(profile.creatureUuid);
+			resolvedProfiles.push({ ...profile, worldUuid });
+		}
 
 		// Create Portal instance and set origin
 		const portal = new Portal();
 		portal.origin(casterToken);
 
-		// Add each creature profile
-		for (const profile of profiles) {
-
-			if (!profile.creatureUuid) {
-				console.warn("shadowdark-extras | Skipping profile with no UUID");
-				continue;
-			}
-
+		// Add each creature profile (using the resolved world UUID)
+		for (const profile of resolvedProfiles) {
 			// Parse count formula if it's a dice formula
-			let countFormula = profile.count || "1";
 			let count = 1;
-
+			const countFormula = profile.count || "1";
 			if (typeof countFormula === 'string' && countFormula.includes('d')) {
 				try {
 					const roll = new Roll(countFormula);
 					await roll.evaluate();
 					count = roll.total;
-
-					// Post roll result to chat
 					await roll.toMessage({
-						flavor: `Summoning ${profile.displayName || profile.creatureName || 'creatures'} `,
+						flavor: `Summoning ${profile.displayName || profile.creatureName || 'creatures'}`,
 						speaker: ChatMessage.getSpeaker({ actor: casterActor })
 					});
 				} catch (err) {
-					console.warn("shadowdark-extras | Invalid count formula, using 1:", countFormula, err);
+					console.warn(`${MODULE_ID} | Invalid count formula, using 1:`, countFormula, err);
 					count = 1;
 				}
 			} else {
 				count = parseInt(countFormula) || 1;
 			}
 
-
-			// Add the creature to the portal (Portal expects just the UUID/name and count)
-			portal.addCreature(profile.creatureUuid, { count });
+			portal.addCreature(profile.worldUuid, { count });
 		}
 
-		// Spawn directly - this will show placement UI and spawn the creatures
+		// Spawn — shows placement UI and creates the tokens on the scene
 		const creatures = await portal.spawn();
 
 		// Check if creatures were spawned
 		if (creatures && creatures.length > 0) {
-			// Grant ownership to the caster
-			const tokenUpdates = creatures.map(token => {
-				const update = {
-					_id: token.id,
-					[`ownership.${game.user.id}`]: CONST.DOCUMENT_OWNERSHIP_LEVELS.OWNER
-				};
-
-				// For unlinked tokens, also update the actor ownership in actorData
-				if (!token.actorLink) {
-					update[`actorData.ownership.${game.user.id}`] = CONST.DOCUMENT_OWNERSHIP_LEVELS.OWNER;
-
-				}
-
-				return update;
-			});
-
-			await canvas.scene.updateEmbeddedDocuments("Token", tokenUpdates);
-
-			// Track tokens for expiry if deleteAtExpiry is enabled
-			if (summoningConfig.deleteAtExpiry && game.combat) {
-				const duration = item?.system?.duration;
-				const durationType = duration?.type; // e.g., "rounds", "turns", "minutes", etc.
-				let durationValue = parseInt(duration?.value) || 0;
-
-				// Double duration on critical success
-				if (isCriticalSuccess && durationValue > 0) {
-					durationValue = durationValue * 2;
-				}
-
-				if ((durationType === 'rounds' || durationType === 'turns') && durationValue > 0) {
-					const currentRound = game.combat.round || 1;
-					const expiryRound = currentRound + durationValue;
-
-					const sceneId = canvas.scene.id;
-					const tokenIds = creatures.map(t => t.id);
-
-					// Use the helper function for persistent storage
-					await trackSummonedTokensForExpiry(sceneId, tokenIds, expiryRound, item?.name || 'Unknown Spell');
-
-					// Also add to duration tracker if trackDuration is enabled
-					const spellDamageConfig = item?.flags?.[MODULE_ID]?.spellDamage || {};
-					if (spellDamageConfig.trackDuration) {
-						try {
-							const trackerConfig = {
-								perTurnTrigger: spellDamageConfig.perTurnTrigger || "start",
-								perTurnDamage: spellDamageConfig.perTurnDamage || "",
-								reapplyEffects: spellDamageConfig.reapplyEffects || false,
-								damageType: spellDamageConfig.damageType || "",
-								effects: spellDamageConfig.effects || [],
-								templateId: null,
-								summonedTokenIds: tokenIds
-							};
-
-							await startDurationSpell(casterActor, item, tokenIds, trackerConfig);
-						} catch (err) {
-							console.warn("shadowdark-extras | Failed to start duration tracking for summoning spell:", err);
-						}
+			// Grant ownership to the summoner.
+			// Always update the world actor's ownership directly — Foundry checks the base
+			// actor first for both linked AND unlinked tokens (the delta only overrides when
+			// explicitly set). Updating delta.ownership via updateEmbeddedDocuments goes
+			// through server-side sanitization that requires a user-context Foundry doesn't
+			// provide in token batch-updates, causing a crash.
+			const actorIdsUpdated = new Set();
+			for (const token of creatures) {
+				const worldActor = game.actors.get(token.actorId);
+				if (!worldActor || actorIdsUpdated.has(worldActor.id)) continue;
+				await worldActor.update({
+					ownership: {
+						...worldActor.ownership,
+						[ownerUserId]: CONST.DOCUMENT_OWNERSHIP_LEVELS.OWNER
 					}
+				});
+				actorIdsUpdated.add(worldActor.id);
+			}
+
+			// Duration tracking — run regardless of summoningConfig flags so that any
+			// summoning spell with a duration shows up in the focus tracker and auto-expires.
+			const duration     = item?.system?.duration;
+			const durationType = duration?.type;
+			let   durationValue = parseInt(duration?.value) || 0;
+			if (isCriticalSuccess && durationValue > 0) durationValue *= 2;
+
+			const tokenIds  = creatures.map(t => t.id);
+			const hasDuration = (durationType === "rounds" || durationType === "turns") && durationValue > 0;
+
+			if (hasDuration) {
+				// Always show summoning spells in the focus spell duration tracker.
+				// (Replaces the old spellDamageConfig.trackDuration guard — summoning
+				// spells should always appear in the tracker when they have a duration.)
+				try {
+					const spellDamageConfig = item?.flags?.[MODULE_ID]?.spellDamage || {};
+					await startDurationSpell(casterActor, item, tokenIds, {
+						perTurnTrigger:  spellDamageConfig.perTurnTrigger  || "start",
+						perTurnDamage:   spellDamageConfig.perTurnDamage   || "",
+						reapplyEffects:  spellDamageConfig.reapplyEffects  || false,
+						damageType:      spellDamageConfig.damageType      || "",
+						effects:         spellDamageConfig.effects         || [],
+						templateId:      null,
+						summonedTokenIds: tokenIds
+					});
+				} catch (err) {
+					console.warn(`${MODULE_ID} | Failed to start duration tracking for summoning spell:`, err);
+				}
+
+				// Auto-delete tokens when the expiry round is reached in combat.
+				// summoningConfig.deleteAtExpiry defaults to true for summoning spells.
+				const shouldDelete = summoningConfig.deleteAtExpiry ?? true;
+				if (shouldDelete && game.combat) {
+					const expiryRound = (game.combat.round || 1) + durationValue;
+					await trackSummonedTokensForExpiry(canvas.scene.id, tokenIds, expiryRound, item?.name || "Summoning");
 				}
 			}
 

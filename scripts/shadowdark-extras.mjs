@@ -385,14 +385,13 @@ class InventoryStylesApp extends foundry.applications.api.HandlebarsApplicationM
 		);
 
 		const containersEnabled = game.settings.get(MODULE_ID, "enableContainers");
-		const unidentifiedEnabled = game.settings.get(MODULE_ID, "enableUnidentified");
 
 		// Build category list with visibility flags
 		const categories = Object.entries(styles.categories).map(([key, config]) => {
 			// Hide container category if containers not enabled
 			if (key === "container" && !containersEnabled) return null;
-			// Hide unidentified category if unidentified not enabled
-			if (key === "unidentified" && !unidentifiedEnabled) return null;
+			// Hide unidentified category (SD 4.x handles identification natively)
+			if (key === "unidentified") return null;
 
 			// Convert "transparent" to a usable color picker value
 			const gradientEndColorPicker = (!config.gradientEndColor || config.gradientEndColor === "transparent")
@@ -950,7 +949,6 @@ function applyInventoryStylesToSheet(html, actor) {
 	}
 
 	const containersEnabled = game.settings.get(MODULE_ID, "enableContainers");
-	const unidentifiedEnabled = game.settings.get(MODULE_ID, "enableUnidentified");
 
 	// Set up click handler to re-apply styles when items are expanded
 	// Use event delegation and only attach once
@@ -961,7 +959,7 @@ function applyInventoryStylesToSheet(html, actor) {
 			if ($row.length) {
 				// Delay slightly to allow the details to be rendered
 				setTimeout(() => {
-					applyStylesToSingleItem($row, actor, styles, containersEnabled, unidentifiedEnabled);
+					applyStylesToSingleItem($row, actor, styles, containersEnabled);
 				}, 50);
 			}
 		});
@@ -969,7 +967,7 @@ function applyInventoryStylesToSheet(html, actor) {
 
 	itemRows.each((i, row) => {
 		const $row = $(row);
-		applyStylesToSingleItem($row, actor, styles, containersEnabled, unidentifiedEnabled);
+		applyStylesToSingleItem($row, actor, styles, containersEnabled);
 	});
 }
 
@@ -979,9 +977,8 @@ function applyInventoryStylesToSheet(html, actor) {
  * @param {Actor} actor - The actor
  * @param {Object} styles - The inventory styles settings
  * @param {boolean} containersEnabled - Whether containers feature is enabled
- * @param {boolean} unidentifiedEnabled - Whether unidentified feature is enabled
  */
-function applyStylesToSingleItem($row, actor, styles, containersEnabled, unidentifiedEnabled) {
+function applyStylesToSingleItem($row, actor, styles, containersEnabled) {
 	const itemId = $row.data("item-id") || $row.data("itemId");
 	const item = actor.items.get(itemId);
 	if (!item) return;
@@ -989,15 +986,6 @@ function applyStylesToSingleItem($row, actor, styles, containersEnabled, unident
 	// Determine which style category applies (by priority)
 	let appliedStyle = null;
 	let highestPriority = -1;
-
-	// Check special categories first (they have higher priority by default)
-	// Unidentified
-	if (unidentifiedEnabled && styles.categories.unidentified?.enabled) {
-		if (isUnidentified(item) && styles.categories.unidentified.priority > highestPriority) {
-			appliedStyle = styles.categories.unidentified;
-			highestPriority = styles.categories.unidentified.priority;
-		}
-	}
 
 	// Magical
 	if (styles.categories.magical?.enabled) {
@@ -1093,691 +1081,37 @@ function applyStylesToSingleItem($row, actor, styles, containersEnabled, unident
 }
 
 // ============================================
-// UNIDENTIFIED ITEMS
+// UNIDENTIFIED ITEMS — thin wrappers to SD 4.x native identification
 // ============================================
 
+/**
+ * Returns true when the item is unidentified via SD 4.x native system.
+ * Falls back to the legacy SDX flag for worlds not yet migrated.
+ */
 function isUnidentified(item) {
-	return Boolean(item?.getFlag?.(MODULE_ID, "unidentified"));
+	if (!item) return false;
+	// SD 4.x: identification schema exists on PhysicalItemSD → use it
+	if (item.system?.identification !== undefined) {
+		return !item.system.isIdentified;
+	}
+	// Legacy fallback (SD 3.x worlds)
+	return Boolean(item.getFlag?.(MODULE_ID, "unidentified"));
 }
 
 /**
- * Get the masked name for an unidentified item
- * Returns custom unidentified name if set, otherwise the default "Unidentified Item" label
- * @param {Item} item - The item to get masked name for
- * @returns {string} - The masked name to display
+ * Returns the display name for an unidentified item.
+ * In SD 4.x, item.name is already the unidentified name when unidentified.
  */
 function getUnidentifiedName(item) {
-	const customName = item?.getFlag?.(MODULE_ID, "unidentifiedName");
-	if (customName && customName.trim()) {
-		return customName.trim();
-	}
-	return game.i18n.localize("SHADOWDARK_EXTRAS.item.unidentified.label");
+	return item?.name ?? "";
 }
 
 /**
- * Get the masked name from item data (for packed items, etc.)
- * @param {Object} itemData - The item data object
- * @returns {string} - The masked name to display
+ * Returns the display name from raw item data.
+ * In SD 4.x, itemData.name is the display name (unidentified or real).
  */
 function getUnidentifiedNameFromData(itemData) {
-	const customName = itemData?.flags?.[MODULE_ID]?.unidentifiedName;
-	if (customName && customName.trim()) {
-		return customName.trim();
-	}
-	return game.i18n.localize("SHADOWDARK_EXTRAS.item.unidentified.label");
-}
-
-/**
- * Check if the current user can see the true name of an item
- * GMs can always see true names
- * @param {Item} item - The item to check
- * @param {User} user - The user viewing the item (defaults to current user)
- * @returns {boolean} - True if the user can see the real name
- */
-function canSeeTrueName(item, user = game.user) {
-	if (!item) return true;
-	if (user?.isGM) return true;
-	if (!isUnidentified(item)) return true;
-	return false;
-}
-
-/**
- * Setup wrapper to intercept item name for unidentified items
- * This makes unidentified items show "Unidentified Item" in item-piles and other modules
- */
-function setupUnidentifiedItemNameWrapper() {
-	// Only setup if unidentified feature is enabled (with guard)
-	try {
-		if (!game.settings.get(MODULE_ID, "enableUnidentified")) return;
-	} catch {
-		return; // Setting not registered yet
-	}
-
-	//console.log(`${MODULE_ID} | Setting up unidentified item name wrapper`);
-
-	// Get the Item class
-	const ItemClass = CONFIG.Item.documentClass;
-
-	// Search the entire prototype chain for the name descriptor
-	let originalDescriptor = null;
-	let proto = ItemClass.prototype;
-	while (proto && !originalDescriptor) {
-		originalDescriptor = Object.getOwnPropertyDescriptor(proto, "name");
-		if (originalDescriptor) break;
-		proto = Object.getPrototypeOf(proto);
-	}
-
-	// In Foundry v13, name might be defined as a getter that reads from _source
-	// or may not exist as a property descriptor at all (uses DataModel pattern)
-	if (originalDescriptor && originalDescriptor.get) {
-		// Traditional getter pattern - wrap it
-		const originalGetter = originalDescriptor.get;
-
-		Object.defineProperty(ItemClass.prototype, "name", {
-			get: function () {
-				const realName = originalGetter.call(this);
-				if (isUnidentified(this) && !game.user?.isGM) {
-					return getUnidentifiedName(this);
-				}
-				return realName;
-			},
-			set: originalDescriptor.set,
-			configurable: true,
-			enumerable: originalDescriptor.enumerable
-		});
-
-		//console.log(`${MODULE_ID} | Successfully wrapped Item.name getter`);
-	} else {
-		// Foundry v13 DataModel pattern - define a new getter
-		// The name is typically accessed via this._source.name or this.system.name
-		Object.defineProperty(ItemClass.prototype, "name", {
-			get: function () {
-				// Get the real name from source data
-				const realName = this._source?.name ?? this._name ?? "";
-				if (isUnidentified(this) && !game.user?.isGM) {
-					return getUnidentifiedName(this);
-				}
-				return realName;
-			},
-			set: function (value) {
-				// Allow setting the name normally
-				if (this._source) {
-					this._source.name = value;
-				}
-			},
-			configurable: true,
-			enumerable: true
-		});
-
-		//console.log(`${MODULE_ID} | Successfully defined Item.name getter (DataModel pattern)`);
-	}
-}
-
-/**
- * Setup hooks to mask unidentified item names in item-piles UI
- * Item-piles reads item names from source data, bypassing our getter override
- */
-function setupItemPilesUnidentifiedHooks() {
-	// Only setup if unidentified feature is enabled (with guard)
-	try {
-		if (!game.settings.get(MODULE_ID, "enableUnidentified")) return;
-	} catch {
-		return; // Setting not registered yet
-	}
-
-	// Check if item-piles is active
-	if (!game.modules.get("item-piles")?.active) {
-		return;
-	}
-
-	//console.log(`${MODULE_ID} | Setting up item-piles unidentified item hooks`);
-
-	// Default masked name fallback
-	const getDefaultMaskedName = () => game.i18n.localize("SHADOWDARK_EXTRAS.item.unidentified.label");
-
-	/**
-	 * Mask the item name in an HTML element if the item is unidentified
-	 * @param {HTMLElement} element - The item element
-	 * @param {Item} item - The item document
-	 */
-	function maskItemNameIfUnidentified(element, item) {
-		if (game.user?.isGM) return; // GM sees real names
-		if (!item || !isUnidentified(item)) return;
-
-		// Get the item-specific masked name
-		const maskedName = getUnidentifiedName(item);
-		const $el = $(element);
-
-		// Get the REAL name from source data (bypasses our wrapper)
-		const realName = item._source?.name;
-		if (!realName || realName === maskedName) return; // Already masked or no real name
-
-		// Escape special regex characters in the real name
-		const escapedRealName = realName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-		const realNameRegex = new RegExp(escapedRealName, 'g');
-
-		// Replace tooltip/title attributes that might show the real name
-		if ($el.attr("data-tooltip")?.includes(realName)) {
-			$el.attr("data-tooltip", $el.attr("data-tooltip").replace(realNameRegex, maskedName));
-		}
-		if ($el.attr("title")?.includes(realName)) {
-			$el.attr("title", $el.attr("title").replace(realNameRegex, maskedName));
-		}
-		// Also check child elements with tooltips
-		$el.find("[data-tooltip], [title]").each((i, tooltipEl) => {
-			const $tooltip = $(tooltipEl);
-			if ($tooltip.attr("data-tooltip")?.includes(realName)) {
-				$tooltip.attr("data-tooltip", $tooltip.attr("data-tooltip").replace(realNameRegex, maskedName));
-			}
-			if ($tooltip.attr("title")?.includes(realName)) {
-				$tooltip.attr("title", $tooltip.attr("title").replace(realNameRegex, maskedName));
-			}
-		});
-
-		// Find name elements and replace text - item-piles uses various structures
-		// For pile items and merchant items
-		$el.find(".item-piles-name, .item-piles-item-name, [class*='item-name'], [class*='name'], label, span").each((i, nameEl) => {
-			const $name = $(nameEl);
-			// Don't replace if it's a container element with child elements that have the name class
-			if ($name.children().length > 0 && $name.find("[class*='name']").length > 0) return;
-
-			const currentText = $name.text().trim();
-			if (!currentText) return;
-
-			// Check if the text contains the real name
-			if (currentText.includes(realName)) {
-				// Check if it contains quantity suffix like "(x1)" or "x 2"
-				const qtyMatch = currentText.match(/\s*(\(x?\d+\)|x\s*\d+)$/i);
-				if (qtyMatch) {
-					$name.text(maskedName + qtyMatch[0]);
-				} else {
-					$name.text(currentText.replace(realNameRegex, maskedName));
-				}
-			}
-		});
-
-		// Also check direct text content for simple elements
-		if ($el.hasClass("item-piles-item-row") || $el.hasClass("item-piles-item") || $el.hasClass("item-piles-flexrow")) {
-			const textNodes = $el.contents().filter(function () {
-				return this.nodeType === 3 && this.textContent.trim();
-			});
-			textNodes.each((i, node) => {
-				const text = node.textContent;
-				if (text.includes(realName)) {
-					node.textContent = text.replace(realNameRegex, maskedName);
-				}
-			});
-		}
-
-		// Also walk all descendant text nodes to catch any we might have missed
-		$el.find("*").addBack().contents().filter(function () {
-			return this.nodeType === 3 && this.textContent.includes(realName);
-		}).each((i, node) => {
-			node.textContent = node.textContent.replace(realNameRegex, maskedName);
-		});
-	}
-
-	// Hook into item-piles render hooks for each interface type
-	Hooks.on("item-piles-renderPileItem", (element, item) => {
-		maskItemNameIfUnidentified(element, item);
-	});
-
-	Hooks.on("item-piles-renderMerchantItem", (element, item) => {
-		maskItemNameIfUnidentified(element, item);
-	});
-
-	Hooks.on("item-piles-renderVaultGridItem", (element, item) => {
-		maskItemNameIfUnidentified(element, item);
-	});
-
-	// Hook into vault mouse hover to mask tooltip
-	Hooks.on("item-piles-mouseHoverVaultGridItem", (element, item) => {
-		if (game.user?.isGM) return;
-		if (!item || !isUnidentified(item)) return;
-
-		const maskedName = getUnidentifiedName(item);
-		const realName = item._source?.name || item.name;
-		const $el = $(element);
-
-		// The tooltip might be set dynamically, check and replace
-		if ($el.attr("data-tooltip")?.includes(realName)) {
-			$el.attr("data-tooltip", $el.attr("data-tooltip").replace(realName, maskedName));
-		}
-
-		// Also try to intercept the tooltip element if it exists
-		setTimeout(() => {
-			const tooltip = document.querySelector(".tooltip, #tooltip, .item-piles-tooltip");
-			if (tooltip && tooltip.textContent.includes(realName)) {
-				tooltip.textContent = tooltip.textContent.replace(realName, maskedName);
-			}
-		}, 10);
-	});
-
-	// Hook into item transfers to preserve unidentified flags
-	// This ensures the unidentified flag is not lost when items are moved between actors
-	Hooks.on("item-piles-preTransferItems", (source, sourceUpdates, target, targetUpdates, interactionId) => {
-		// Ensure our flags are preserved in the target updates
-		if (targetUpdates?.itemsToCreate) {
-			for (const itemData of targetUpdates.itemsToCreate) {
-				// Find the source item
-				const sourceItem = source.items?.find(i => i.id === itemData._id || i.name === itemData.name);
-				if (sourceItem && isUnidentified(sourceItem)) {
-					// Ensure the flag is preserved
-					itemData.flags = itemData.flags || {};
-					itemData.flags[MODULE_ID] = itemData.flags[MODULE_ID] || {};
-					itemData.flags[MODULE_ID].unidentified = true;
-					// Also copy the unidentified name if present
-					const unidentifiedName = sourceItem.getFlag(MODULE_ID, "unidentifiedName");
-					if (unidentifiedName) {
-						itemData.flags[MODULE_ID].unidentifiedName = unidentifiedName;
-					}
-					// Also copy the unidentified description if present
-					const unidentifiedDesc = sourceItem.getFlag(MODULE_ID, "unidentifiedDescription");
-					if (unidentifiedDesc) {
-						itemData.flags[MODULE_ID].unidentifiedDescription = unidentifiedDesc;
-					}
-				}
-			}
-		}
-	});
-
-	// Also hook into preAddItems to ensure flags are preserved when items are added
-	Hooks.on("item-piles-preAddItems", (target, itemsToCreate, itemQuantitiesToUpdate, interactionId) => {
-		// itemsToCreate contains {item, quantity} objects
-		// We need to ensure our flags are on the item data
-		for (const entry of itemsToCreate) {
-			const itemData = entry.item;
-			if (!itemData) continue;
-
-			// Check if the original item data has our unidentified flag
-			if (itemData.flags?.[MODULE_ID]?.unidentified) {
-				// Flag is already there, good
-				continue;
-			}
-
-			// If the item is being created from an existing item with the flag, preserve it
-			if (itemData._id) {
-				// Try to find the source item
-				const sourceItem = game.items?.get(itemData._id);
-				if (sourceItem && isUnidentified(sourceItem)) {
-					itemData.flags = itemData.flags || {};
-					itemData.flags[MODULE_ID] = itemData.flags[MODULE_ID] || {};
-					itemData.flags[MODULE_ID].unidentified = true;
-					const unidentifiedName = sourceItem.getFlag(MODULE_ID, "unidentifiedName");
-					if (unidentifiedName) {
-						itemData.flags[MODULE_ID].unidentifiedName = unidentifiedName;
-					}
-					const unidentifiedDesc = sourceItem.getFlag(MODULE_ID, "unidentifiedDescription");
-					if (unidentifiedDesc) {
-						itemData.flags[MODULE_ID].unidentifiedDescription = unidentifiedDesc;
-					}
-				}
-			}
-		}
-	});
-
-	// Use ITEM_SIMILARITIES to include our flags in item comparison
-	// This ensures item-piles treats items with different unidentified states as different
-	Hooks.once("item-piles-ready", () => {
-		try {
-			const currentSimilarities = game.itempiles?.API?.ITEM_SIMILARITIES || [];
-			if (!currentSimilarities.includes(`flags.${MODULE_ID}.unidentified`)) {
-				// Add our flag to similarities so unidentified items don't stack with identified ones
-				game.itempiles.API.setItemSimilarities([
-					...currentSimilarities,
-					`flags.${MODULE_ID}.unidentified`
-				]);
-				//console.log(`${MODULE_ID} | Added unidentified flag to item-piles similarities`);
-			}
-		} catch (err) {
-			console.warn(`${MODULE_ID} | Could not add unidentified flag to item-piles similarities`, err);
-		}
-
-		// Monkey patch item-piles internal PileItem class to intercept name store values
-		// This is more reliable than DOM manipulation since it affects the source of truth
-		if (!game.user?.isGM) {
-			try {
-				// Hook into PileItem name store setter by wrapping the setupProperties method
-				// or intercepting the name.set calls via Svelte store subscription
-				const patchPileItemName = (pileItem) => {
-					if (!pileItem?.item || !pileItem?.name) return;
-
-					// Check if item is unidentified
-					const item = pileItem.item;
-					if (!isUnidentified(item)) return;
-
-					const maskedName = getUnidentifiedName(item);
-
-					// Override the name store value
-					if (typeof pileItem.name?.set === "function") {
-						pileItem.name.set(maskedName);
-
-						// Also wrap the original set to intercept future updates
-						const originalSet = pileItem.name.set.bind(pileItem.name);
-						pileItem.name.set = (value) => {
-							// Always use masked name for unidentified items
-							if (isUnidentified(item)) {
-								originalSet(maskedName);
-							} else {
-								originalSet(value);
-							}
-						};
-					}
-				};
-
-				// Hook into render hooks to patch PileItem instances
-				// These hooks pass the element and the actual Item document
-				// We need to find the corresponding PileItem store
-				const patchFromRenderHook = (element, item) => {
-					if (!item || !isUnidentified(item)) return;
-
-					const maskedName = getUnidentifiedName(item);
-
-					// The element contains Svelte component data
-					// Try to find and patch the name store
-					const $el = $(element);
-
-					// Also directly manipulate visible name elements as fallback
-					$el.find("[class*='name']").each((i, nameEl) => {
-						const $name = $(nameEl);
-						const text = $name.text().trim();
-						const realName = item._source?.name || item.name;
-						if (text && text.includes(realName)) {
-							$name.text(text.replace(realName, maskedName));
-						}
-					});
-
-					// Handle direct text that might show the real name
-					const realName = item._source?.name;
-					if (realName) {
-						$el.contents().filter(function () {
-							return this.nodeType === 3;
-						}).each((i, node) => {
-							if (node.textContent.includes(realName)) {
-								node.textContent = node.textContent.replace(new RegExp(realName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'), maskedName);
-							}
-						});
-					}
-				};
-
-				// Re-register hooks with enhanced patching
-				Hooks.on("item-piles-renderPileItem", patchFromRenderHook);
-				Hooks.on("item-piles-renderMerchantItem", patchFromRenderHook);
-				Hooks.on("item-piles-renderVaultGridItem", patchFromRenderHook);
-
-				//console.log(`${MODULE_ID} | Enhanced item-piles name patching installed`);
-			} catch (err) {
-				console.warn(`${MODULE_ID} | Could not install enhanced item-piles name patching`, err);
-			}
-		}
-	});
-
-	// Hook into item-piles item drops to preserve flags
-	Hooks.on("item-piles-preDropItem", (source, target, itemData, position, quantity) => {
-		// itemData should have our flags if they exist on the source item
-		// This hook runs before the item is created
-		const sourceActor = source?.actor || source;
-		if (!sourceActor?.items) return;
-
-		// Find the original item being dropped
-		const originalItem = sourceActor.items.find(i =>
-			i.id === itemData._id ||
-			(i.name === itemData.name && i.type === itemData.type)
-		);
-
-		if (originalItem && isUnidentified(originalItem)) {
-			// Ensure the flags are on itemData
-			itemData.flags = itemData.flags || {};
-			itemData.flags[MODULE_ID] = itemData.flags[MODULE_ID] || {};
-			itemData.flags[MODULE_ID].unidentified = true;
-			const unidentifiedDesc = originalItem.getFlag(MODULE_ID, "unidentifiedDescription");
-			if (unidentifiedDesc) {
-				itemData.flags[MODULE_ID].unidentifiedDescription = unidentifiedDesc;
-			}
-		}
-	});
-
-	// Hook into Dialog rendering to mask item names in drop dialogs
-	Hooks.on("renderDialog", (app, html, data) => {
-		if (game.user?.isGM) return;
-		maskUnidentifiedNamesInElement(html, getDefaultMaskedName);
-	});
-
-	// Hook into Application rendering to catch item-piles Svelte apps
-	Hooks.on("renderApplication", (app, html, data) => {
-		if (game.user?.isGM) return;
-
-		// Check if this might be an item-piles application
-		const appName = app.constructor?.name || "";
-		const isItemPiles = appName.includes("ItemPile") ||
-			appName.includes("Trading") ||
-			appName.includes("Merchant") ||
-			appName.includes("TradeMerchantItem") ||
-			app.options?.classes?.some(c => c.includes("item-piles")) ||
-			app.id?.includes?.("item-pile") ||
-			html.find(".item-piles").length > 0 ||
-			html.find("[class*='item-piles']").length > 0;
-
-		if (isItemPiles) {
-			// Apply immediately
-			maskUnidentifiedNamesInElement(html, getDefaultMaskedName);
-
-			// Svelte components render asynchronously, so apply again after delays
-			setTimeout(() => {
-				maskUnidentifiedNamesInElement(html, getDefaultMaskedName);
-			}, 50);
-			setTimeout(() => {
-				maskUnidentifiedNamesInElement(html, getDefaultMaskedName);
-			}, 150);
-			setTimeout(() => {
-				maskUnidentifiedNamesInElement(html, getDefaultMaskedName);
-			}, 300);
-		}
-	});
-
-	// Also use MutationObserver to catch dynamically rendered content
-	Hooks.once("ready", () => {
-		if (game.user?.isGM) return;
-
-		const observer = new MutationObserver((mutations) => {
-			for (const mutation of mutations) {
-				for (const node of mutation.addedNodes) {
-					if (node.nodeType !== 1) continue; // Element nodes only
-
-					const $node = $(node);
-
-					// Check if this is an item-piles trading dialog (by ID pattern)
-					const nodeId = node.id || "";
-					const isTradeDialog = nodeId.includes("item-pile-buy-item-dialog") ||
-						nodeId.includes("item-pile-trade-dialog");
-
-					// Check if this is an item-piles element
-					const isItemPilesElement = $node.hasClass("item-piles") ||
-						$node.find(".item-piles").length > 0 ||
-						$node.closest(".item-piles").length > 0 ||
-						$node.hasClass("item-piles-flexrow") ||
-						$node.find("[class*='item-piles']").length > 0 ||
-						node.className?.includes?.("item-piles") ||
-						$node.hasClass("item-piles-app");
-
-					if (isTradeDialog || isItemPilesElement) {
-						maskUnidentifiedNamesInElement($node, getDefaultMaskedName);
-
-						// For Svelte dialogs, content might render after the initial mount
-						// so we apply masking again after a brief delay
-						setTimeout(() => {
-							maskUnidentifiedNamesInElement($node, getDefaultMaskedName);
-						}, 50);
-						setTimeout(() => {
-							maskUnidentifiedNamesInElement($node, getDefaultMaskedName);
-						}, 200);
-					}
-
-					// Also check window titles 
-					if ($node.hasClass("window-title") || $node.find(".window-title").length > 0) {
-						maskUnidentifiedNamesInElement($node, getDefaultMaskedName);
-					}
-
-					// Check for any element whose parent has item-piles in the ID
-					if ($node.closest("[id*='item-pile']").length > 0) {
-						maskUnidentifiedNamesInElement($node, getDefaultMaskedName);
-					}
-				}
-			}
-		});
-
-		observer.observe(document.body, {
-			childList: true,
-			subtree: true
-		});
-	});
-
-	// Hook into chat message rendering to mask item names from item-piles
-	Hooks.on("renderChatMessageHTML", (message, html, context) => {
-		if (game.user?.isGM) return;
-
-		// Check if this is an item-piles message
-		const isItemPilesMessage = message.flags?.["item-piles"] ||
-			html.querySelector(".item-piles") !== null ||
-			html.querySelector("[class*='item-piles']") !== null;
-
-		if (!isItemPilesMessage) return;
-
-		maskUnidentifiedNamesInElement(html, getDefaultMaskedName);
-	});
-}
-
-/**
- * Mask all unidentified item names in an HTML element
- * @param {HTMLElement} html - The HTML element to process
- * @param {Function} getDefaultMaskedName - Function to get the default masked name string
- */
-function maskUnidentifiedNamesInElement(html, getDefaultMaskedName) {
-	const defaultMaskedName = getDefaultMaskedName();
-
-	// Build map of unidentified item real names to their masked names
-	const unidentifiedNameMap = new Map();
-
-	// Helper to add items from an actor
-	const addItemsFromActor = (actor) => {
-		if (!actor?.items) return;
-		for (const item of actor.items) {
-			if (isUnidentified(item)) {
-				const realName = item._source?.name;
-				if (realName) {
-					const maskedName = getUnidentifiedName(item);
-					unidentifiedNameMap.set(realName, maskedName);
-				}
-			}
-		}
-	};
-
-	// Check all world actors
-	for (const actor of game.actors) {
-		addItemsFromActor(actor);
-	}
-
-	// Check token actors on the current scene (merchants are often synthetic token actors)
-	if (canvas?.tokens?.placeables) {
-		for (const token of canvas.tokens.placeables) {
-			if (token.actor) {
-				addItemsFromActor(token.actor);
-			}
-		}
-	}
-
-	// Check ALL scenes for unlinked token actors (not just currently viewed scene)
-	for (const scene of game.scenes) {
-		for (const tokenDoc of scene.tokens) {
-			// Unlinked tokens have their own delta actor
-			if (tokenDoc.actor) {
-				addItemsFromActor(tokenDoc.actor);
-			}
-			// Also check actorData for older Foundry versions
-			if (tokenDoc.delta?.items) {
-				for (const itemData of tokenDoc.delta.items) {
-					if (itemData.flags?.[MODULE_ID]?.unidentified) {
-						const realName = itemData.name;
-						if (realName) {
-							const maskedName = getUnidentifiedNameFromData(itemData);
-							unidentifiedNameMap.set(realName, maskedName);
-						}
-					}
-				}
-			}
-		}
-	}
-
-	// Also check world items (standalone items)
-	if (game.items) {
-		for (const item of game.items) {
-			if (isUnidentified(item)) {
-				const realName = item._source?.name;
-				if (realName) {
-					const maskedName = getUnidentifiedName(item);
-					unidentifiedNameMap.set(realName, maskedName);
-				}
-			}
-		}
-	}
-
-	if (unidentifiedNameMap.size === 0) return;
-
-	// Replace item names in text nodes
-	html.find("*").addBack().contents().filter(function () {
-		return this.nodeType === 3; // Text nodes only
-	}).each((i, node) => {
-		let text = node.textContent;
-		let changed = false;
-		for (const [realName, maskedName] of unidentifiedNameMap) {
-			if (text.includes(realName)) {
-				text = text.replace(new RegExp(realName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'), maskedName);
-				changed = true;
-			}
-		}
-		if (changed) {
-			node.textContent = text;
-		}
-	});
-
-	// Also check and replace in title attributes and data-tooltip
-	html.find("[title], [data-tooltip]").each((i, el) => {
-		const $el = $(el);
-		for (const [realName, maskedName] of unidentifiedNameMap) {
-			if ($el.attr("title")?.includes(realName)) {
-				$el.attr("title", $el.attr("title").replace(new RegExp(realName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'), maskedName));
-			}
-			if ($el.attr("data-tooltip")?.includes(realName)) {
-				$el.attr("data-tooltip", $el.attr("data-tooltip").replace(new RegExp(realName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'), maskedName));
-			}
-		}
-	});
-}
-
-function getDisplayName(item, user = game.user) {
-	if (!item) return "";
-	if (isUnidentified(item) && !user?.isGM) {
-		return getUnidentifiedName(item);
-	}
-	return item.name ?? "";
-}
-
-function getDisplayDescription(item, user = game.user) {
-	if (!item) return "";
-	if (isUnidentified(item) && !user?.isGM) {
-		// Return the unidentified description if set, otherwise empty
-		return item.getFlag?.(MODULE_ID, "unidentifiedDescription") ?? "";
-	}
-	return item.system?.description ?? "";
-}
-
-function getDisplayNameFromData(itemData, user = game.user) {
-	if (!itemData) return "";
-	const unidentified = Boolean(itemData?.flags?.[MODULE_ID]?.unidentified);
-	if (unidentified && !user?.isGM) {
-		return getUnidentifiedNameFromData(itemData);
-	}
-	return itemData.name ?? "";
+	return itemData?.name ?? "";
 }
 
 // ============================================
@@ -1800,6 +1134,32 @@ function isBasicItem(item) {
 
 function isContainerItem(item) {
 	return Boolean(item?.getFlag(MODULE_ID, "isContainer"));
+}
+
+/**
+ * SD 4.x made `isPhysical` a hardcoded getter, so setting it to false via
+ * item.update() no longer hides items from inventory. Patch getPhysicalItems()
+ * on the base data-model prototype to also exclude items that have a containerId
+ * (i.e. are stored inside an SDX container).
+ */
+function patchGetPhysicalItemsForContainers() {
+	const PlayerSD = CONFIG.Actor.dataModels?.Player;
+	if (!PlayerSD) return;
+
+	// Walk up to ActorBaseSD (the prototype that defines getPhysicalItems) so the
+	// patch applies to both PlayerSD and NpcSD in a single write.
+	const baseProto = Object.getPrototypeOf(PlayerSD.prototype);
+	const target = (typeof baseProto?.getPhysicalItems === "function") ? baseProto : PlayerSD.prototype;
+
+	if (!target.getPhysicalItems || target.__sdxContainerItemsPatched) return;
+
+	const _original = target.getPhysicalItems;
+	target.getPhysicalItems = function (group = true) {
+		return _original.call(this, group).filter(
+			i => !i.getFlag(MODULE_ID, "containerId")
+		);
+	};
+	target.__sdxContainerItemsPatched = true;
 }
 
 function getContainedItems(containerItem) {
@@ -2160,205 +1520,6 @@ async function setItemContainerId(item, containerId) {
 	if (!item) return;
 	if (containerId) return item.setFlag(MODULE_ID, "containerId", containerId);
 	return item.unsetFlag(MODULE_ID, "containerId");
-}
-
-function injectUnidentifiedCheckbox(app, html) {
-	// Check if unidentified items are enabled
-	if (!game.settings.get(MODULE_ID, "enableUnidentified")) return;
-
-	const item = app?.item;
-	if (!item) return;
-
-	// Only for Shadowdark system
-	if (game.system.id !== "shadowdark") return;
-
-	// Only show to GM
-	if (!game.user?.isGM) return;
-
-	// De-dupe on re-render
-	html.find(".sdx-unidentified-property").remove();
-	html.find(".sdx-unidentified-description-box").remove();
-	html.find(".sdx-unidentified-box").remove();
-
-	const detailsTab = html.find('.tab[data-tab="details"], .tab[data-tab="tab-details"], .tab.details').first();
-	if (!detailsTab.length) return;
-
-	const isEditable = Boolean(app.isEditable);
-	const label = game.i18n.localize("SHADOWDARK_EXTRAS.item.unidentified.checkbox_label");
-	const hint = game.i18n.localize("SHADOWDARK_EXTRAS.item.unidentified.checkbox_hint");
-	const nameLabel = game.i18n.localize("SHADOWDARK_EXTRAS.item.unidentified.name_label");
-	const nameHint = game.i18n.localize("SHADOWDARK_EXTRAS.item.unidentified.name_hint");
-	const currentUnidentifiedName = item.getFlag(MODULE_ID, "unidentifiedName") ?? "";
-
-	// Find the ITEM PROPERTIES box and add the checkbox there
-	const itemPropertiesBox = detailsTab.find('.SD-box').filter((_, box) => {
-		const header = $(box).find('.header label').first().text().trim();
-		const expectedHeader = game.i18n.localize('SHADOWDARK.item.properties.label');
-		return header === expectedHeader;
-	}).first();
-
-	const toggleHtml = `
-		<h3>${foundry.utils.escapeHTML(label)}</h3>
-		<input type="checkbox" ${isUnidentified(item) ? "checked" : ""} ${isEditable ? "" : "disabled"} title="${foundry.utils.escapeHTML(hint)}" class="sdx-unidentified-property" />
-	`;
-
-	const nameInputHtml = `
-		<h3>${foundry.utils.escapeHTML(nameLabel)}</h3>
-		<input type="text" value="${foundry.utils.escapeHTML(currentUnidentifiedName)}" ${isEditable ? "" : "disabled"} title="${foundry.utils.escapeHTML(nameHint)}" placeholder="${foundry.utils.escapeHTML(game.i18n.localize("SHADOWDARK_EXTRAS.item.unidentified.label"))}" class="sdx-unidentified-name" style="grid-column: span 2; width: 100%;" />
-	`;
-
-	if (itemPropertiesBox.length) {
-		// Insert the checkbox at the end of the ITEM PROPERTIES content (inside the SD-grid)
-		const grid = itemPropertiesBox.find('.content .SD-grid').first();
-		if (grid.length) {
-			grid.append(toggleHtml);
-			grid.append(nameInputHtml);
-		} else {
-			itemPropertiesBox.find('.content').first().append(toggleHtml);
-			itemPropertiesBox.find('.content').first().append(nameInputHtml);
-		}
-	} else {
-		// For item types without ITEM PROPERTIES box (Potion, Scroll, Spell, Wand, etc.)
-		// Create a new SD-box for the Unidentified property
-		const itemTypesWithoutPropertiesBox = ["Potion", "Scroll", "Spell", "Wand"];
-		if (itemTypesWithoutPropertiesBox.includes(item.type)) {
-			const boxLabel = game.i18n.localize("SHADOWDARK_EXTRAS.item.unidentified.box_label") || "Item Properties";
-			const newBoxHtml = `
-				<div class="SD-box sdx-unidentified-box">
-					<div class="header light">
-						<label>${foundry.utils.escapeHTML(boxLabel)}</label>
-						<span></span>
-					</div>
-					<div class="content">
-						<div class="SD-grid right">
-							${toggleHtml}
-							${nameInputHtml}
-						</div>
-					</div>
-				</div>
-			`;
-
-			// Find the grid container and append the new box
-			const gridContainer = detailsTab.find('.grid-3-columns, .grid-2-columns').first();
-			if (gridContainer.length) {
-				gridContainer.append(newBoxHtml);
-			} else {
-				detailsTab.append(newBoxHtml);
-			}
-		} else {
-			// No suitable place to add the checkbox for this item type
-			return;
-		}
-	}
-
-	// Bind toggle
-	const toggle = html.find("input.sdx-unidentified-property[type=checkbox]").first();
-	toggle.on("change", async (ev) => {
-		if (!isEditable) return;
-		const enabled = Boolean(ev.currentTarget.checked);
-		await item.setFlag(MODULE_ID, "unidentified", enabled);
-		app.render();
-	});
-
-	// Bind name input
-	const nameInput = html.find("input.sdx-unidentified-name").first();
-	nameInput.on("change", async (ev) => {
-		if (!isEditable) return;
-		const newName = ev.currentTarget.value.trim();
-		if (newName) {
-			await item.setFlag(MODULE_ID, "unidentifiedName", newName);
-		} else {
-			await item.unsetFlag(MODULE_ID, "unidentifiedName");
-		}
-	});
-
-	// Add unidentified description editor on the Description tab
-	injectUnidentifiedDescriptionEditor(app, html, item, isEditable);
-}
-
-/**
- * Inject the unidentified description editor into the item sheet's Description tab
- */
-function injectUnidentifiedDescriptionEditor(app, html, item, isEditable) {
-	// Find the Description tab
-	const descTab = html.find('.tab[data-tab="description"], .tab[data-tab="tab-description"]').first();
-	if (!descTab.length) return;
-
-	// Get current unidentified description
-	const unidentifiedDesc = item.getFlag(MODULE_ID, "unidentifiedDescription") ?? "";
-
-	const sectionLabel = game.i18n.localize("SHADOWDARK_EXTRAS.item.unidentified.description_label");
-	const sectionHint = game.i18n.localize("SHADOWDARK_EXTRAS.item.unidentified.description_hint");
-	const editLabel = game.i18n.localize("SHADOWDARK_EXTRAS.party.edit_description");
-
-	// Create the unidentified description box
-	const boxHtml = `
-		<div class="SD-box sdx-unidentified-description-box">
-			<div class="header">
-				<label>${foundry.utils.escapeHTML(sectionLabel)}</label>
-				${isEditable ? `<a class="sdx-edit-unidentified-desc" data-tooltip="${foundry.utils.escapeHTML(editLabel)}"><i class="fas fa-edit"></i></a>` : ""}
-			</div>
-			<div class="content">
-				<p class="hint" style="font-style: italic; opacity: 0.7; margin-bottom: 8px;">${foundry.utils.escapeHTML(sectionHint)}</p>
-				<div class="sdx-unidentified-desc-content">${unidentifiedDesc || '<em style="opacity: 0.5;">(empty)</em>'}</div>
-			</div>
-		</div>
-	`;
-
-	// Find the existing description box and insert after it
-	const existingDescBox = descTab.find('.SD-box').first();
-	if (existingDescBox.length) {
-		existingDescBox.after(boxHtml);
-	} else {
-		descTab.append(boxHtml);
-	}
-
-	// Bind edit button
-	if (isEditable) {
-		html.find(".sdx-edit-unidentified-desc").on("click", async (ev) => {
-			ev.preventDefault();
-			await editUnidentifiedDescription(item, app);
-		});
-	}
-}
-
-/**
- * Open a dialog to edit the unidentified description
- */
-async function editUnidentifiedDescription(item, app) {
-	const currentDesc = item.getFlag(MODULE_ID, "unidentifiedDescription") ?? "";
-	const title = game.i18n.localize("SHADOWDARK_EXTRAS.item.unidentified.edit_description_title");
-	const label = game.i18n.localize("SHADOWDARK_EXTRAS.item.unidentified.description_label");
-
-	new foundry.applications.api.DialogV2({
-		window: { title: `${title}: ${item.name}` },
-		content: `
-			<form>
-				<div class="form-group stacked">
-					<label>${label}</label>
-					<textarea name="unidentifiedDescription" rows="8" style="width: 100%; min-height: 150px;">${foundry.utils.escapeHTML(currentDesc)}</textarea>
-				</div>
-			</form>
-		`,
-		buttons: [
-			{
-				action: "save",
-				icon: "fas fa-save",
-				label: game.i18n.localize("SHADOWDARK_EXTRAS.party.save"),
-				default: true,
-				callback: async (event, button) => {
-					const newDesc = button.form.elements.unidentifiedDescription.value;
-					await item.setFlag(MODULE_ID, "unidentifiedDescription", newDesc);
-					app.render();
-				}
-			},
-			{
-				action: "cancel",
-				icon: "fas fa-times",
-				label: game.i18n.localize("SHADOWDARK_EXTRAS.party.cancel")
-			}
-		]
-	}).render({ force: true });
 }
 
 function injectBasicContainerUI(app, html) {
@@ -2826,7 +1987,7 @@ function buildContainerTooltip(containerItem) {
 		.slice(0, 50)
 		.map(entry => {
 			const isOwnedItem = entry instanceof Item;
-			const name = isOwnedItem ? getDisplayName(entry) : getDisplayNameFromData(entry);
+			const name = entry?.name ?? "";
 			const qty = Number(entry?.system?.quantity ?? 1);
 			const qtySuffix = Number.isFinite(qty) && qty > 1 ? ` x${qty}` : "";
 			return `• ${name}${qtySuffix}`;
@@ -2863,271 +2024,6 @@ function attachContainerContentsToActorSheet(app, html) {
 	});
 }
 
-function addUnidentifiedIndicatorForGM(app, html) {
-	// Check if unidentified items are enabled
-	if (!game.settings.get(MODULE_ID, "enableUnidentified")) return;
-
-	const actor = app?.actor;
-	if (!actor) return;
-	if (!game.user?.isGM) return; // Only GMs see the indicator
-
-	// Add visual indicator to unidentified items in inventory
-	html.find('.item[data-item-id]').each((_, el) => {
-		const $el = $(el);
-		const itemId = $el.data('itemId') ?? $el.attr('data-item-id');
-		if (!itemId) return;
-		const item = actor.items?.get?.(itemId);
-		if (!item || !isUnidentified(item)) return;
-
-		// Add an icon indicator next to the item name
-		const $nameLink = $el.find('.item-name');
-		if ($nameLink.length && !$nameLink.find('.sdx-unidentified-indicator').length) {
-			$nameLink.prepend('<i class="fas fa-question-circle sdx-unidentified-indicator" title="Unidentified Item (GM Only)" style="color: #ff6b6b; margin-right: 4px;"></i>');
-		}
-	});
-}
-
-function maskUnidentifiedItemsOnSheet(app, html) {
-	// Check if unidentified items are enabled
-	if (!game.settings.get(MODULE_ID, "enableUnidentified")) return;
-
-	const actor = app?.actor;
-	if (!actor) return;
-	if (game.user?.isGM) return; // GM sees real names
-
-	// Mask item names in the inventory list
-	html.find('.item[data-item-id]').each((_, el) => {
-		const $el = $(el);
-		const itemId = $el.data('itemId') ?? $el.attr('data-item-id');
-		if (!itemId) return;
-		const item = actor.items?.get?.(itemId);
-		if (!item || !isUnidentified(item)) return;
-
-		const maskedName = getUnidentifiedName(item);
-
-		// Mark item image as unidentified to hide chat icon
-		const $itemImage = $el.find('.item-image');
-		if ($itemImage.length) {
-			$itemImage.addClass('sdx-unidentified');
-		}
-
-		// Mask the item name
-		const $nameLink = $el.find('.item-name');
-		if ($nameLink.length) {
-			$nameLink.text(maskedName);
-		}
-	});
-
-	// Mask item descriptions in expanded details
-	html.find('.item-details').each((_, el) => {
-		const $details = $(el);
-		const $row = $details.closest('[data-item-id]');
-		const itemId = $row?.data?.('itemId') ?? $row?.attr?.('data-item-id');
-		if (!itemId) return;
-		const item = actor.items?.get?.(itemId);
-		if (!item || !isUnidentified(item)) return;
-
-		// Mask description
-		$details.find('.item-description, .description').text('');
-	});
-
-	// Mask weapon names in attacks section (Abilities tab)
-	// Attacks have data-item-id attribute and contain the weapon name in the display
-	html.find('.attack a[data-item-id]').each((_, el) => {
-		const $el = $(el);
-		const itemId = $el.data('itemId') ?? $el.attr('data-item-id');
-		if (!itemId) return;
-		const item = actor.items?.get?.(itemId);
-		if (!item || !isUnidentified(item)) return;
-
-		const maskedName = getUnidentifiedName(item);
-
-		// The attack display format is: "WeaponName (handedness), modifier, damage, properties"
-		// We need to replace the weapon name while keeping the rest
-		const currentHtml = $el.html();
-		// Find the weapon name (everything after the dice icon and before the first parenthesis or comma)
-		const match = currentHtml.match(/(<i[^>]*><\/i>\s*)([^(,]+)(.*)/);
-		if (match) {
-			// Replace weapon name with masked name
-			$el.html(match[1] + maskedName + match[3]);
-		}
-	});
-}
-
-function maskUnidentifiedItemSheet(app, html) {
-	// Check if unidentified items are enabled
-	if (!game.settings.get(MODULE_ID, "enableUnidentified")) return;
-
-	const item = app?.item;
-	if (!item) return;
-	if (game.user?.isGM) return; // GM sees real names
-	if (!isUnidentified(item)) return;
-
-	//console.log(`${MODULE_ID} | Masking unidentified item sheet for: ${item.name}`);
-
-	const maskedName = getUnidentifiedName(item);
-
-	// Make the sheet non-editable to prevent form submission
-	app.options.editable = false;
-
-	// Disable form submission to prevent data corruption
-	const form = html.find('form').first();
-	if (form.length) {
-		form.on('submit', (ev) => {
-			ev.preventDefault();
-			ev.stopPropagation();
-			return false;
-		});
-		// Disable all form inputs
-		form.find('input, textarea, select').prop('disabled', true);
-	}
-
-	// Mask the window title
-	app.element?.find('.window-title')?.text?.(maskedName);
-
-	// Mask the header title in the sheet content (non-input elements only)
-	html.find('.window-header h1:not(input), .window-header .window-title:not(input)').each((_, el) => {
-		const $el = $(el);
-		if ($el.text().trim()) $el.text(maskedName);
-	});
-
-	// Replace name input field value with masked name
-	html.find('input.item-name, input[name="name"]').each((_, el) => {
-		const $el = $(el);
-		$el.val(maskedName);
-	});
-
-	// Mask the image tooltip which also shows the name
-	html.find('img[data-tooltip]').each((_, el) => {
-		const $el = $(el);
-		$el.attr('data-tooltip', maskedName);
-	});
-
-	// Replace name display elements with masked name (avoid modifying inputs and container contents)
-	html.find('h1.item-name, .item-name:not(input)').each((_, el) => {
-		const $el = $(el);
-		// Skip if this is inside a container list (contained items should show real names)
-		if ($el.closest('.sdx-container-list').length > 0) return;
-		if ($el.text().trim()) $el.text(maskedName);
-	});
-
-	// Hide the Effects tab link and content (try multiple selectors)
-	html.find('a[data-tab="effects"], nav a[data-tab="effects"], .tabs a[data-tab="effects"], .sheet-tabs a[data-tab="effects"]').hide();
-	html.find('.tab[data-tab="effects"], div[data-tab="effects"]').hide();
-
-	// Also hide by looking for text content
-	html.find('a.item, nav .item, .tabs .item').each((_, el) => {
-		const $el = $(el);
-		if ($el.text().trim().toLowerCase().includes('effect')) {
-			$el.hide();
-		}
-	});
-
-	// Replace description with unidentified description
-	const unidentifiedDesc = item.getFlag?.(MODULE_ID, "unidentifiedDescription") ?? "";
-	const noDescText = game.i18n.localize("SHADOWDARK_EXTRAS.item.unidentified.no_description");
-
-	// Create the "not identified" notice HTML
-	const notIdentifiedHtml = `
-		<div class="sdx-unidentified-notice">
-			<i class="fas fa-question-circle"></i>
-			<p>${noDescText}</p>
-		</div>
-	`;
-
-	// Find the description tab and replace its content entirely (after the banner)
-	const descTab = html.find('.tab[data-tab="tab-description"], .tab[data-tab="description"]').first();
-	if (descTab.length) {
-		// Save the banner if it exists
-		const banner = descTab.find('.SD-banner').first();
-		const bannerHtml = banner.length ? banner[0].outerHTML : '';
-
-		// Build new content
-		let newContent = bannerHtml;
-		if (unidentifiedDesc) {
-			// Enrich and display the unidentified description
-			const enrichHTML = foundry?.applications?.ux?.TextEditor?.implementation?.enrichHTML ?? TextEditor.enrichHTML;
-			enrichHTML(unidentifiedDesc, { async: true }).then(enriched => {
-				newContent += `<div class="editor-content" style="padding: 10px;">${enriched}</div>`;
-				descTab.html(newContent);
-			});
-		} else {
-			newContent += notIdentifiedHtml;
-			descTab.html(newContent);
-		}
-	}
-
-	// Hide the unidentified description box since players shouldn't see the GM section
-	html.find('.sdx-unidentified-description-box').remove();
-
-	// Hide the Details tab content for players (shows item type, properties, etc.)
-	html.find('.tab[data-tab="details"], .tab[data-tab="tab-details"]').each((_, el) => {
-		const $el = $(el);
-		$el.html(notIdentifiedHtml);
-	});
-}
-
-/**
- * Mask unidentified item names in dialogs (attack rolls, spell rolls, etc.)
- * Since the original item data is not accessible in renderDialog hook,
- * we scan the DOM for names that match unidentified items owned by the current player's actors.
- */
-function maskUnidentifiedItemInDialog(app, html, data) {
-	// Check if unidentified items are enabled
-	if (!game.settings.get(MODULE_ID, "enableUnidentified")) return;
-
-	if (game.user?.isGM) return; // GM sees real names
-
-	// Build a map of real names to masked names from unidentified items the player can see
-	const unidentifiedNameMap = new Map();
-	for (const actor of game.actors) {
-		if (!actor.testUserPermission(game.user, "OBSERVER")) continue;
-		for (const item of actor.items) {
-			if (isUnidentified(item)) {
-				// Map real name to custom masked name
-				unidentifiedNameMap.set(item.name, getUnidentifiedName(item));
-			}
-		}
-	}
-
-	if (unidentifiedNameMap.size === 0) return;
-
-	// Mask the window title
-	const $title = app.element?.find('.window-title');
-	if ($title?.length) {
-		let titleText = $title.text();
-		for (const [realName, maskedName] of unidentifiedNameMap) {
-			if (titleText.includes(realName)) {
-				titleText = titleText.replaceAll(realName, maskedName);
-			}
-		}
-		$title.text(titleText);
-	}
-
-	// Mask the h2 title inside the dialog (e.g., "Roll Attack with Dagger")
-	html.find('h2').each((_, el) => {
-		const $el = $(el);
-		let text = $el.text();
-		for (const [realName, maskedName] of unidentifiedNameMap) {
-			if (text.includes(realName)) {
-				text = text.replaceAll(realName, maskedName);
-			}
-		}
-		$el.text(text);
-	});
-
-	// Mask any other visible instances of the item name in the dialog
-	html.find('label, span, p').each((_, el) => {
-		const $el = $(el);
-		let text = $el.text();
-		for (const [realName, maskedName] of unidentifiedNameMap) {
-			if (text.includes(realName)) {
-				text = text.replaceAll(realName, maskedName);
-			}
-		}
-		$el.text(text);
-	});
-}
 
 // ============================================
 // INVENTORY ENHANCEMENTS (delete button, multi-select)
@@ -4782,16 +3678,6 @@ function registerSettings() {
 	game.settings.register(MODULE_ID, "enableTrading", {
 		name: game.i18n.localize("SHADOWDARK_EXTRAS.settings.enable_trading.name"),
 		hint: game.i18n.localize("SHADOWDARK_EXTRAS.settings.enable_trading.hint"),
-		scope: "world",
-		config: true,
-		default: true,
-		type: Boolean,
-		requiresReload: true,
-	});
-
-	game.settings.register(MODULE_ID, "enableUnidentified", {
-		name: game.i18n.localize("SHADOWDARK_EXTRAS.settings.enable_unidentified.name"),
-		hint: game.i18n.localize("SHADOWDARK_EXTRAS.settings.enable_unidentified.hint"),
 		scope: "world",
 		config: true,
 		default: true,
@@ -6530,8 +5416,6 @@ function enhanceAbilitiesTab(app, html, actor) {
 	// Add enhanced class to the abilities tab
 	$abilitiesTab.addClass('sdx-enhanced-abilities');
 
-	// Fix bold formatting for unidentified weapons in abilities section
-	fixUnidentifiedWeaponBoldInAbilities($abilitiesTab);
 }
 
 // ============================================
@@ -6793,62 +5677,6 @@ async function rollSkill(actor, skillName, ability) {
 			rollMode: rollMode
 		});
 	}
-}
-
-/**
- * Fix bold formatting for unidentified weapons in the abilities section
- */
-function fixUnidentifiedWeaponBoldInAbilities($abilitiesTab) {
-	// Only fix if unidentified feature is enabled
-	try {
-		if (!game.settings.get(MODULE_ID, "enableUnidentified")) return;
-	} catch {
-		return;
-	}
-
-	// Find all attack displays that contain "Unidentified Item" text
-	$abilitiesTab.find('.attack .rollable').each(function () {
-		const $rollable = $(this);
-		const html = $rollable.html();
-
-		// Check if it contains "Unidentified Item" without proper bold formatting
-		if (html && html.includes('Unidentified Item')) {
-			// Replace plain text with bold version
-			const fixedHtml = html.replace(
-				/Unidentified Item/g,
-				'<b style="font-size:16px">Unidentified Item</b>'
-			);
-			$rollable.html(fixedHtml);
-		}
-	});
-}
-
-/**
- * Fix bold formatting for unidentified weapons - runs for all users
- */
-function fixUnidentifiedWeaponBoldForAllUsers(html) {
-	// Only fix if unidentified feature is enabled
-	try {
-		if (!game.settings.get(MODULE_ID, "enableUnidentified")) return;
-	} catch {
-		return;
-	}
-
-	// Find all attack rollables that contain "Unidentified Item" text
-	html.find('.attack .rollable').each(function () {
-		const $rollable = $(this);
-		const currentHtml = $rollable.html();
-
-		// Check if it contains "Unidentified Item" without proper bold formatting
-		if (currentHtml && currentHtml.includes('Unidentified Item') && !currentHtml.includes('<b')) {
-			// Replace plain text with bold version
-			const fixedHtml = currentHtml.replace(
-				/Unidentified Item/g,
-				'<b style="font-size:16px">Unidentified Item</b>'
-			);
-			$rollable.html(fixedHtml);
-		}
-	});
 }
 
 // ============================================
@@ -8933,68 +7761,6 @@ function activateNpcInventoryListeners(html, actor) {
 // PARTY FUNCTIONS
 // ============================================
 
-/**
- * Patch shadowdark.utils.toggleItemDetails to handle unidentified items
- * When a player expands an unidentified item, show the unidentified description instead
- */
-function patchToggleItemDetailsForUnidentified() {
-	// Check if unidentified items are enabled
-	if (!game.settings.get(MODULE_ID, "enableUnidentified")) return;
-
-	if (!shadowdark?.utils?.toggleItemDetails) {
-		console.warn(`${MODULE_ID} | toggleItemDetails not found, skipping patch`);
-		return;
-	}
-
-	const originalToggleItemDetails = shadowdark.utils.toggleItemDetails.bind(shadowdark.utils);
-
-	shadowdark.utils.toggleItemDetails = async function (target) {
-		const listObj = $(target).parent();
-
-		// If collapsing, just use original behavior
-		if (listObj.hasClass("expanded")) {
-			return originalToggleItemDetails(target);
-		}
-
-		// Get the item
-		const itemId = listObj.data("uuid");
-		const item = await fromUuid(itemId);
-
-		// If not unidentified or user is GM, use original behavior
-		if (!item || !isUnidentified(item) || game.user?.isGM) {
-			return originalToggleItemDetails(target);
-		}
-
-		// For unidentified items viewed by non-GM, show masked content
-		const unidentifiedDesc = item.getFlag?.(MODULE_ID, "unidentifiedDescription") ?? "";
-		const maskedName = getUnidentifiedName(item);
-
-		// Build minimal details content
-		let details = "";
-		if (unidentifiedDesc) {
-			// Enrich the unidentified description for proper text rendering
-			const enrichedDesc = await TextEditor.enrichHTML(unidentifiedDesc, { async: true });
-			details = `<div class="item-description">${enrichedDesc}</div>`;
-		} else {
-			details = `<p><em>${game.i18n.localize("SHADOWDARK_EXTRAS.item.unidentified.no_description")}</em></p>`;
-		}
-
-		const detailsDiv = document.createElement("div");
-		detailsDiv.setAttribute("style", "display: none");
-		detailsDiv.classList.add("item-details");
-		detailsDiv.insertAdjacentHTML("afterbegin", details);
-		listObj.append(detailsDiv);
-		$(detailsDiv).slideDown(200);
-
-		listObj.toggleClass("expanded");
-	};
-
-	//console.log(`${MODULE_ID} | Patched toggleItemDetails for unidentified items`);
-}
-
-/**
- * Patch the Light Source Tracker to include Party actors with active lights
- */
 function patchLightSourceTrackerForParty() {
 	const tracker = game.shadowdark?.lightSourceTracker;
 	if (!tracker) {
@@ -9167,7 +7933,6 @@ function extendActorCreationDialog() {
 	// For standard Dialog
 	Hooks.on("renderDialog", (app, html, data) => {
 		addPartyOptionToSelect(html);
-		maskUnidentifiedItemInDialog(app, html, data);
 	});
 
 	// For Application render
@@ -10347,6 +9112,10 @@ Hooks.once("ready", async () => {
 	// Setup silenced casting blocking
 	setupSilencedCastingBlocker();
 
+	// Patch getPhysicalItems to exclude items inside SDX containers (SD 4.x
+	// made isPhysical a hardcoded getter, so setting it to false no longer works)
+	patchGetPhysicalItemsForContainers();
+
 	// Setup consolidated rollAttack patches
 	setupRollAttackPatches();
 
@@ -10378,9 +9147,6 @@ Hooks.once("ready", async () => {
 	//console.log(`${MODULE_ID} | Marching Mode initialized`);
 
 	patchLightSourceTrackerForParty();
-	patchToggleItemDetailsForUnidentified();
-	setupUnidentifiedItemNameWrapper();
-	setupItemPilesUnidentifiedHooks();
 
 	// Patch NPC sheets to add _toggleLightSource method
 	// The Shadowdark system's ActorSheetSD._deleteItem tries to call this method,
@@ -10520,21 +9286,6 @@ Hooks.once("ready", async () => {
 Hooks.on("preCreateItem", (item, data, options, userId) => {
 	// Note: This hook handles flag preservation for items created directly
 
-	// Preserve unidentified flags (if feature is enabled)
-	try {
-		if (game.settings.get(MODULE_ID, "enableUnidentified")) {
-			if (data.flags?.[MODULE_ID]?.unidentified) {
-				item.updateSource({
-					[`flags.${MODULE_ID}.unidentified`]: true,
-					[`flags.${MODULE_ID}.unidentifiedName`]: data.flags[MODULE_ID].unidentifiedName || "",
-					[`flags.${MODULE_ID}.unidentifiedDescription`]: data.flags[MODULE_ID].unidentifiedDescription || ""
-				});
-			}
-		}
-	} catch {
-		// Setting may not exist yet
-	}
-
 	// Preserve spell damage flags when learning a spell from a scroll
 	// This handles the "Learn Spell" button functionality
 	if (item.type === "Spell" && item.parent) {
@@ -10666,8 +9417,6 @@ Hooks.on("renderPlayerSheetSD", async (app, html, data) => {
 	enhanceEffectsTab(app, html, app.actor);
 	injectRenownSection(html, app.actor);
 	attachContainerContentsToActorSheet(app, html);
-	addUnidentifiedIndicatorForGM(app, html);
-	maskUnidentifiedItemsOnSheet(app, html);
 	enhanceInventoryWithDeleteAndMultiSelect(app, html);
 	injectTradeButton(html, app.actor);
 	injectAddCoinsButton(html, app.actor);
@@ -10679,7 +9428,6 @@ Hooks.on("renderPlayerSheetSD", async (app, html, data) => {
 	// 	await injectCarousingButton(app, html, app.actor);
 	// }
 	enableItemChatIcon(app, html);
-	fixUnidentifiedWeaponBoldForAllUsers(html);
 });
 
 // Inject Inventory tab into NPC sheets (but not Party sheets)
@@ -10695,8 +9443,6 @@ Hooks.on("renderNpcSheetSD", async (app, html, data) => {
 	await injectNpcInventoryTab(app, html, data);
 	patchNpcSheetForItemDrops(app);
 	attachContainerContentsToActorSheet(app, html);
-	addUnidentifiedIndicatorForGM(app, html);
-	maskUnidentifiedItemsOnSheet(app, html);
 	applyInventoryStylesToSheet(html, app.actor);
 	enableItemChatIcon(app, html);
 	await injectConditionsToggles(app, html, app.actor);
@@ -14262,6 +13008,19 @@ function setupRollConfigPatches() {
 				await original.call(this, config);
 				if (actor.type !== "Player") return;
 
+				// Save the system-generated roll baseline before SDX adds anything.
+				// The renderRollDialogSD hook reads these to reconstruct the formula
+				// from scratch on every render, preventing double-application.
+				if (config.mainRoll) {
+					config._sdxSystemBonus = config.mainRoll.bonus ?? "";
+					config._sdxSystemBase = config.mainRoll.base ?? "d20";
+					config._sdxSystemTooltips = config.mainRoll.tooltips ?? "";
+				}
+				if (config.damageRoll) {
+					config._sdxSystemDamageFormula = config.damageRoll.formula ?? "";
+					config._sdxSystemDamageTooltips = config.damageRoll.tooltips ?? "";
+				}
+
 				// --- 1. ADVANTAGE / DISADVANTAGE ---
 				const bonuses = actor.system.bonuses || {};
 				const advFlags = bonuses.advantage || [];
@@ -14370,25 +13129,106 @@ function setupRollConfigPatches() {
 	Hooks.on("createActor", (actor) => wrapActorGenerators(actor));
 
 	// --- 3. ROLL DIALOG HOOK ---
-	Hooks.on("renderRollDialogSD", (app, html, context) => {
+	// Async so we can look up the weapon via fromUuid. Runs after rendering and
+	// updates the formula inputs directly. Always rebuilds from _sdxSystemBonus
+	// (saved by the generator wrapper above) so re-renders never double-apply.
+	// Also serves as a fallback if the generator wrapper didn't run.
+	Hooks.on("renderRollDialogSD", async (app, html, context) => {
 		const config = app.config;
-		if (!config?._sdxPromptable) return;
+		if (!config || config.type !== "attack" || !config.itemUuid || !config.mainRoll) return;
 
-		const { hitBonuses, damageBonuses } = config._sdxPromptable;
+		const rollActor = game.actors.get(config.actorId);
+		if (!rollActor) return;
+
+		const weapon = await fromUuid(config.itemUuid);
+		if (!weapon) return;
+
+		const targetToken = game.user.targets.first();
+		const targetActor = targetToken?.actor || null;
+
+		// Use the system-saved baseline when available (set by the generator wrapper).
+		// Fall back to current mainRoll values — those equal the system values when
+		// the wrapper didn't run, because nothing else modified them yet.
+		const systemBonus    = config._sdxSystemBonus    ?? config.mainRoll.bonus    ?? "";
+		const systemBase     = config._sdxSystemBase     ?? config.mainRoll.base     ?? "d20";
+		const systemTooltips = config._sdxSystemTooltips ?? config.mainRoll.tooltips ?? "";
+		const systemDmgFmt   = config._sdxSystemDamageFormula  ?? config.damageRoll?.formula;
+		const systemDmgTips  = config._sdxSystemDamageTooltips ?? config.damageRoll?.tooltips ?? "";
+
+		// Build promptable lists for UI and selected-bonus tracking
+		const hitBonuses    = getPromptableHitBonuses(weapon, rollActor, targetActor);
+		const damageBonuses = getPromptableDamageBonuses(weapon, rollActor, targetActor);
+		config._sdxPromptable = { hitBonuses, damageBonuses };
+
+		// Reconstruct hit formula: system baseline + selected promptable + auto-apply
+		let hitBonus    = systemBonus;
+		let hitTooltips = systemTooltips;
+
+		(config._sdxSelectedHitBonuses || []).forEach(b => {
+			hitBonus    += shadowdark.dice.formatBonus(b.formula);
+			hitTooltips += `, ${b.label || "Bonus"}`;
+		});
+
+		let dmgFormula  = systemDmgFmt;
+		let dmgTooltips = systemDmgTips;
+
+		(config._sdxSelectedDamageBonuses || []).forEach(b => {
+			if (dmgFormula == null) return;
+			dmgFormula  += shadowdark.dice.formatBonus(b.formula);
+			dmgTooltips += `, ${b.label || "Bonus"}`;
+		});
+
+		const wbFlags = weapon.flags?.["shadowdark-extras"]?.weaponBonus;
+		if (wbFlags?.enabled) {
+			for (const bonus of wbFlags.hitBonuses || []) {
+				if (!bonus.formula || bonus.prompt) continue;
+				if (!evaluateRequirements(bonus.requirements || [], rollActor, targetActor)) continue;
+				hitBonus    += shadowdark.dice.formatBonus(bonus.formula);
+				hitTooltips += `, ${bonus.label || "Weapon Bonus"}`;
+			}
+			for (const bonus of wbFlags.damageBonuses || []) {
+				if (!bonus.formula || bonus.prompt || dmgFormula == null || !config.damageRoll) continue;
+				if (!evaluateRequirements(bonus.requirements || [], rollActor, targetActor)) continue;
+				dmgFormula  += shadowdark.dice.formatBonus(bonus.formula);
+				dmgTooltips += `, ${bonus.label || "Weapon Damage Bonus"}`;
+			}
+		}
+
+		// Write reconstructed values back to config
+		config.mainRoll.bonus    = hitBonus;
+		config.mainRoll.formula  = `${systemBase}${hitBonus}`;
+		config.mainRoll.tooltips = hitTooltips;
+
+		if (dmgFormula != null && config.damageRoll) {
+			config.damageRoll.formula  = dmgFormula;
+			config.damageRoll.tooltips = dmgTooltips;
+		}
+
+		// Update formula inputs in the already-rendered dialog so the display
+		// matches config (necessary when the generator wrapper didn't modify them).
+		const hitInput = html.querySelector('input[name="mainRoll.formula"]');
+		if (hitInput && hitInput.value !== config.mainRoll.formula) {
+			hitInput.value = config.mainRoll.formula;
+		}
+		const dmgInput = html.querySelector('input[name="damageRoll.formula"]');
+		if (dmgInput && dmgFormula != null && config.damageRoll) {
+			dmgInput.value = config.damageRoll.formula;
+		}
+
+		// Inject promptable bonus UI (optional bonuses the user can toggle)
 		if (hitBonuses.length === 0 && damageBonuses.length === 0) return;
 
-		// Create container for prompt bonuses
 		const promptContainer = document.createElement('div');
 		promptContainer.className = 'sdx-prompt-bonuses';
 		promptContainer.innerHTML = '<hr>';
 
-		const createSection = (title, bonuses, type, selectedKey) => {
+		const createSection = (title, bonuses, selectedKey) => {
 			if (bonuses.length === 0) return;
 			const section = document.createElement('div');
 			section.className = 'sdx-prompt-section';
 			section.innerHTML = `<label class="sdx-prompt-section-label">${title}</label>`;
 
-			bonuses.forEach((bonus, i) => {
+			bonuses.forEach((bonus) => {
 				const isChecked = config[selectedKey]?.some(b => b.index === bonus.index) ?? false;
 				const row = document.createElement('div');
 				row.className = `sdx-prompt-bonus-row ${isChecked ? 'sdx-bonus-checked' : ''}`;
@@ -14404,8 +13244,8 @@ function setupRollConfigPatches() {
 					else config[selectedKey].push(bonus);
 
 					// Re-trigger generator and re-render app
-					const actor = game.actors.get(config.actorId);
-					await actor?.system.rollConfigGenerators[config.type]?.(config);
+					const hookActor = game.actors.get(config.actorId);
+					await hookActor?.system.rollConfigGenerators[config.type]?.(config);
 					app.render(true);
 				});
 				section.appendChild(row);
@@ -14413,10 +13253,9 @@ function setupRollConfigPatches() {
 			promptContainer.appendChild(section);
 		};
 
-		createSection('Optional To Hit Bonuses', hitBonuses, 'hit', '_sdxSelectedHitBonuses');
-		createSection('Optional Damage Bonuses', damageBonuses, 'damage', '_sdxSelectedDamageBonuses');
+		createSection('Optional To Hit Bonuses', hitBonuses, '_sdxSelectedHitBonuses');
+		createSection('Optional Damage Bonuses', damageBonuses, '_sdxSelectedDamageBonuses');
 
-		// Inject before the footer
 		const footer = html.querySelector('footer');
 		if (footer) footer.before(promptContainer);
 	});
@@ -16070,18 +14909,6 @@ Hooks.on("renderItemSheet", (app, html, data) => {
 	}
 
 	try {
-		injectUnidentifiedCheckbox(app, html);
-	} catch (err) {
-		console.error(`${MODULE_ID} | Failed to inject unidentified checkbox`, err);
-	}
-
-	try {
-		maskUnidentifiedItemSheet(app, html);
-	} catch (err) {
-		console.error(`${MODULE_ID} | Failed to mask unidentified item sheet`, err);
-	}
-
-	try {
 		enhanceSpellSheet(app, html);
 	} catch (err) {
 		console.error(`${MODULE_ID} | Failed to enhance spell sheet`, err);
@@ -16231,85 +15058,6 @@ Hooks.on("preUpdateItem", (item, updateData, options, userId) => {
 	}
 });
 
-// Mask unidentified item names in chat messages (attack rolls, item cards, etc.)
-Hooks.on("renderChatMessageHTML", (message, html, context) => {
-	// Check if unidentified items are enabled (with guard for setting not yet registered)
-	try {
-		if (!game.settings.get(MODULE_ID, "enableUnidentified")) return;
-	} catch {
-		return; // Setting not registered yet
-	}
-
-	if (game.user?.isGM) return; // GM sees real names
-
-	// Check if this is an item-related chat card
-	const card = html.querySelector('.item-card, .chat-card');
-	if (!card) return;
-
-	// Get the item from the message flags or data attributes
-	const actorId = card.dataset.actorId ?? message.speaker?.actor;
-	const itemId = card.dataset.itemId;
-
-	if (!actorId || !itemId) return;
-
-	const actor = game.actors.get(actorId);
-	if (!actor) return;
-
-	const item = actor.items.get(itemId);
-	if (!item || !isUnidentified(item)) return;
-
-	const maskedName = getUnidentifiedName(item);
-	const realName = item._source?.name || item.name;
-
-	// Mask the message flavor text (appears above the card, e.g., "Attack roll with Boomerang")
-	html.find('.flavor-text, .message-header .flavor, .message-content > p').each((_, el) => {
-		const $el = $(el);
-		let text = $el.text();
-		if (text.includes(realName)) {
-			$el.text(text.replaceAll(realName, maskedName));
-		}
-	});
-
-	// Mask the item name in the header
-	$card.find('.card-header h3.item-name, .card-header .item-name').text(maskedName);
-
-	// Mask the item name in header tooltip
-	$card.find('.card-header img[data-tooltip]').attr('data-tooltip', maskedName);
-
-	// Mask any other references to the item name in the card content
-	// The attack title shows the weapon name (comes from options.flavor which uses data.item.name)
-	$card.find('.card-attack-roll h3').each((_, el) => {
-		const $h3 = $(el);
-		let text = $h3.text();
-		// Replace the item's real name if it appears
-		if (text.includes(realName)) {
-			$h3.text(text.replaceAll(realName, maskedName));
-		}
-	});
-
-	// Also mask in general text elements that might show the name
-	$card.find('h3, span, p, li').each((_, el) => {
-		const $el = $(el);
-		// Skip if it's the main item name we already handled
-		if ($el.hasClass('item-name')) return;
-		let text = $el.text();
-		if (text.includes(realName)) {
-			// Check if this element has child elements - if so only modify text nodes
-			if ($el.children().length > 0) {
-				$el.contents().each(function () {
-					if (this.nodeType === Node.TEXT_NODE && this.textContent.includes(realName)) {
-						this.textContent = this.textContent.replaceAll(realName, maskedName);
-					}
-				});
-			} else {
-				$el.text(text.replaceAll(realName, maskedName));
-			}
-		}
-	});
-
-	// Hide the description for unidentified items
-	$card.find('.card-content').html('');
-});
 
 // Store original user's targets in chat message flags (for damage cards)
 Hooks.on("preCreateChatMessage", (message, data, options, userId) => {
@@ -17332,222 +16080,6 @@ Hooks.on("updateActiveEffect", (effect, changes, options, userId) => {
  * @param {HTMLElement} html - The rendered HTML of the directory (plain DOM element in V13)
  * @param {Collection|Map|Array} items - The items to check for unidentified status
  */
-function markUnidentifiedItemsInDirectory(html, items) {
-	//console.log(`${MODULE_ID} | markUnidentifiedItemsInDirectory START`, {
-	//		isGM: game.user?.isGM,
-	//		html,
-	//		items,
-	//	itemsType: items?.constructor?.name
-	//});
-
-	// Only show for GM
-	if (!game.user?.isGM) {
-		//console.log(`${MODULE_ID} | Skipping - not GM`);
-		return;
-	}
-
-	// Check if unidentified items feature is enabled
-	// Note: The setting may not be registered yet if this hook fires early
-	try {
-		const settingKey = `${MODULE_ID}.enableUnidentified`;
-		// Check if the setting exists first
-		if (game.settings.settings.has(settingKey)) {
-			const unidentifiedEnabled = game.settings.get(MODULE_ID, "enableUnidentified");
-			//console.log(`${MODULE_ID} | enableUnidentified setting:`, unidentifiedEnabled);
-			if (!unidentifiedEnabled) {
-				//console.log(`${MODULE_ID} | Skipping - unidentified items not enabled`);
-				return;
-			}
-		} else {
-			// Setting not registered yet - we'll allow it since we know it will be enabled
-			// (if not enabled, it will be fixed on next re-render after settings load)
-			//console.log(`${MODULE_ID} | Setting not registered yet, proceeding anyway`);
-		}
-	} catch (e) {
-		// If any error, log but proceed anyway
-		//console.log(`${MODULE_ID} | Error checking setting, proceeding anyway`, e);
-	}
-
-	// Handle both plain DOM element and jQuery object (for compatibility)
-	const element = html instanceof HTMLElement ? html : html[0] || html;
-
-	//console.log(`${MODULE_ID} | markUnidentifiedItemsInDirectory called`, {
-	//htmlType: typeof html,
-	//	isHTMLElement: html instanceof HTMLElement,
-	//	element,
-	//	elementTag: element?.tagName,
-	//	itemsType: items?.constructor?.name,
-	//	itemsSize: items?.size || items?.length || items?.contents?.length || "unknown"
-	//});
-
-	if (!element?.querySelectorAll) {
-		console.warn(`${MODULE_ID} | markUnidentifiedItemsInDirectory: html is not a valid element`, html);
-		return;
-	}
-
-	// Iterate through all directory-item entries
-	// V13 uses various selectors for directory items - try multiple patterns
-	let directoryItems = element.querySelectorAll("li.directory-item");
-	if (!directoryItems.length) {
-		directoryItems = element.querySelectorAll("li.entry");
-	}
-	if (!directoryItems.length) {
-		directoryItems = element.querySelectorAll(".directory-item.entry");
-	}
-	if (!directoryItems.length) {
-		directoryItems = element.querySelectorAll("[data-entry-id]");
-	}
-
-	//console.log(`${MODULE_ID} | Found ${directoryItems.length} directory items`);
-
-	let unidentifiedCount = 0;
-	directoryItems.forEach(li => {
-		// Get the entry ID from data attributes (V13 uses data-entry-id)
-		const entryId = li.dataset?.entryId || li.dataset?.documentId || li.getAttribute("data-entry-id") || li.getAttribute("data-document-id");
-		if (!entryId) {
-			//console.log(`${MODULE_ID} | li has no entry ID:`, li.outerHTML?.substring(0, 200));
-			return;
-		}
-
-		// Find the item in the collection
-		let item;
-		if (items instanceof Map) {
-			item = items.get(entryId);
-		} else if (items instanceof foundry.utils.Collection || Array.isArray(items)) {
-			item = items.find?.(i => i.id === entryId || i._id === entryId) ?? items.get?.(entryId);
-		} else if (items?.contents) {
-			item = items.contents.find(i => i.id === entryId || i._id === entryId);
-		} else if (typeof items?.get === "function") {
-			// Try game.items style collection
-			item = items.get(entryId);
-		}
-
-		if (!item) {
-			//console.log(`${MODULE_ID} | Item not found for ID: ${entryId}`);
-			return;
-		}
-
-		// Check if this item is unidentified
-		const itemIsUnidentified = item?.flags?.[MODULE_ID]?.unidentified === true ||
-			(typeof item?.getFlag === "function" && item.getFlag(MODULE_ID, "unidentified") === true);
-
-		if (!itemIsUnidentified) return;
-
-		//console.log(`${MODULE_ID} | Found unidentified item: ${item.name || item._id}`);
-		unidentifiedCount++;
-
-		// Add the unidentified class to the list item
-		li.classList.add("sdx-sidebar-unidentified");
-
-		// Add indicator icon to the list item if it doesn't already exist
-		if (!li.querySelector(".sdx-sidebar-unidentified-icon")) {
-			const tooltipText = game.i18n.localize("SHADOWDARK_EXTRAS.item.unidentified.sidebar_indicator");
-			const icon = document.createElement("i");
-			icon.className = "fas fa-question-circle sdx-sidebar-unidentified-icon";
-			icon.title = tooltipText;
-			// Insert the icon at the beginning of the list item
-			li.insertBefore(icon, li.firstChild);
-		}
-	});
-
-	//console.log(`${MODULE_ID} | Marked ${unidentifiedCount} unidentified items`);
-}
-
-// Hook into the Items sidebar directory rendering - try multiple hook names for V13 compatibility
-Hooks.on("renderItemDirectory", (app, html, data) => {
-	try {
-		//console.log(`${MODULE_ID} | renderItemDirectory hook fired`, { app, html });
-		// Get items from the directory - in v13, app.collection contains the documents
-		const items = app.collection || app.documents || game.items;
-		markUnidentifiedItemsInDirectory(html, items);
-	} catch (err) {
-		console.error(`${MODULE_ID} | Failed to mark unidentified items in sidebar (renderItemDirectory)`, err);
-	}
-});
-
-// V13 might use renderDocumentDirectory for sidebar tabs
-Hooks.on("renderDocumentDirectory", (app, html, data) => {
-	try {
-		// Only process if this is an Item directory
-		if (app.constructor?.documentName !== "Item" && app.collection?.documentName !== "Item") return;
-		//console.log(`${MODULE_ID} | renderDocumentDirectory hook fired for Items`, { app, html });
-		const items = app.collection || app.documents || game.items;
-		markUnidentifiedItemsInDirectory(html, items);
-	} catch (err) {
-		console.error(`${MODULE_ID} | Failed to mark unidentified items in sidebar (renderDocumentDirectory)`, err);
-	}
-});
-
-// V13 ApplicationV2 might use a different hook pattern
-Hooks.on("renderSidebarTab", (app, html, data) => {
-	try {
-		// Only process if this is the items tab
-		const tabName = app.tabName || app.options?.id || app.id;
-		if (tabName !== "items" && app.constructor?.name !== "ItemDirectory") return;
-		//console.log(`${MODULE_ID} | renderSidebarTab hook fired for items`, { app, html, tabName });
-		const items = app.collection || app.documents || game.items;
-		markUnidentifiedItemsInDirectory(html, items);
-	} catch (err) {
-		console.error(`${MODULE_ID} | Failed to mark unidentified items in sidebar (renderSidebarTab)`, err);
-	}
-});
-
-// Hook into compendium rendering for Item compendiums
-Hooks.on("renderCompendium", async (app, html, data) => {
-	try {
-		if (app.collection?.documentName !== "Item") return;
-
-		// v14 quirk: `getIndex({fields})` mutates the cached index entries by
-		// merging the requested fields in. Foundry then marks entries non-
-		// extensible somewhere in the pipeline. If our call requests
-		// `flags.shadowdark-extras.unidentified` and the SD system later calls
-		// `getIndex({fields: ["predefinedEffects", ...]})` on the same pack
-		// (which happens when opening an SDX spell sheet that uses the spell
-		// selector), the merge into our frozen entries throws
-		// `Cannot add property predefinedEffects, object is not extensible`
-		// and the entire spell sheet fails to render.
-		//
-		// Workaround: snapshot the index entries before the cache traps them,
-		// and rebuild the index without our fields after we're done so the
-		// next caller starts fresh.
-		const augmented = await app.collection.getIndex({ fields: [`flags.${MODULE_ID}.unidentified`] });
-		if (!augmented) return;
-
-		// Clone each entry so the markup function holds non-cached references.
-		const snapshot = new foundry.utils.Collection();
-		for (const entry of augmented) {
-			snapshot.set(entry._id, foundry.utils.deepClone(entry));
-		}
-
-		markUnidentifiedItemsInDirectory(html, snapshot);
-
-		// Reset the index cache so subsequent getIndex calls (from SD's
-		// spell-selector etc.) rebuild without colliding with our fields.
-		try {
-			if (typeof app.collection._indexCache !== "undefined") app.collection._indexCache = null;
-			if (typeof app.collection.index?.clear === "function") app.collection.index.clear();
-		} catch (e) { /* best-effort cache reset */ }
-	} catch (err) {
-		console.error(`${MODULE_ID} | Failed to mark unidentified items in compendium`, err);
-	}
-});
-
-// Also re-mark when an item is updated (in case unidentified status changed)
-Hooks.on("updateItem", (item, changes, options, userId) => {
-	// Only care about unidentified flag changes
-	if (!changes?.flags?.[MODULE_ID]?.hasOwnProperty("unidentified")) return;
-
-	// Re-render the Items sidebar if it's open - V13 structure
-	try {
-		const itemsTab = ui.sidebar?.tabs?.items || ui.items;
-		if (itemsTab?.rendered) {
-			itemsTab.render();
-		}
-	} catch (err) {
-		console.warn(`${MODULE_ID} | Could not re-render items sidebar`, err);
-	}
-});
-
 
 // Simplify usesAmmunition to include all ranged weapons (and add weapon-sheet
 // ammunition enhancement). Wrapped in `ready` because both rely on the system's
@@ -18741,17 +17273,23 @@ async function executeSpellItemMacro(spellItem, actor, trigger, context = {}) {
 		};
 
 		const AsyncFunction = Object.getPrototypeOf(async function () { }).constructor;
-		const macroFn = new AsyncFunction(
+
+		// Async functions are strict — redeclaring a named parameter with const/let/var
+		// inside the body throws SyntaxError. Scan the macro command and drop any
+		// parameter whose name is re-declared in the body. Every dropped name is still
+		// accessible via args.<name> so macro behaviour is preserved.
+		const allParams = [
 			"actor", "token", "item", "targets", "target", "targetActor",
 			"trigger", "isSuccess", "isFailure", "isCritical", "isCriticalFail",
-			"rollResult", "rollData", "speaker", "flags", "args",
-			macroCommand
+			"rollResult", "rollData", "speaker", "flags", "args"
+		];
+		const safeParams = allParams.filter(
+			p => !new RegExp(`\\b(?:const|let|var)\\s+${p}\\b`).test(macroCommand)
 		);
-		await macroFn.call(scope,
-			scope.actor, scope.token, scope.item, scope.targets, scope.target, scope.targetActor,
-			scope.trigger, scope.isSuccess, scope.isFailure, scope.isCritical, scope.isCriticalFail,
-			scope.rollResult, scope.rollData, scope.speaker, scope.flags, args
-		);
+		const safeValues = safeParams.map(p => (p === "args" ? args : scope[p]));
+
+		const macroFn = new AsyncFunction(...safeParams, macroCommand);
+		await macroFn.call(scope, ...safeValues);
 	} catch (error) {
 		console.error(`${MODULE_ID} | Error executing spell macro:`, error);
 		ui.notifications.error("There was an error in your macro syntax. See the console (F12) for details");
@@ -18862,63 +17400,76 @@ Hooks.once("ready", () => {
 			}
 		});
 
-		macroExecuteSocket.register("identifyItemAsGM", async (itemUuid, identifySpellUuid, maskedName, originatingUserId) => {
+		// Handler: GM identifies item via SD 4.x native toggleIdentified(),
+		// then routes the reveal dialog back to the originating player.
+		macroExecuteSocket.register("sdxIdentifyItemAsGM", async ({ itemUuid, maskedName, originatingUserId }) => {
 			const item = await fromUuid(itemUuid);
 			if (!item) return;
 
-			// Remove unidentified flags (GM has permission)
-			await item.unsetFlag(MODULE_ID, "unidentified");
-			await item.unsetFlag(MODULE_ID, "unidentifiedName");
+			// SD 4.x native: swaps name ↔ identification.name, flips identified flag
+			await item.system.toggleIdentified();
 
-			// Post chat message (visible to all)
-			const chatContent = `
-				<div class="shadowdark chat-card sdx-identify-chat">
-					<header class="card-header flexrow">
-						<img class="item-image" src="${item.img}" alt="${item.name}"/>
-						<div class="header-text">
-							<h3><i class="fas fa-sparkles"></i> ${game.i18n.localize("SHADOWDARK_EXTRAS.identify.revealed")}</h3>
-						</div>
-					</header>
-					<div class="card-content">
-						<p class="reveal-text">
-							<em>${maskedName}</em> ${game.i18n.localize("SHADOWDARK_EXTRAS.identify.isActually")}
-						</p>
-						<p class="item-name"><strong>${item.name}</strong></p>
-						${item.system?.description ? `<div class="item-description">${item.system.description}</div>` : ""}
-					</div>
-				</div>
-			`;
-
+			// Post chat message visible to all
 			await ChatMessage.create({
-				content: chatContent,
+				content: `
+					<div class="shadowdark chat-card sdx-identify-chat">
+						<header class="card-header flexrow">
+							<img class="item-image" src="${item.img}" alt="${item.name}"/>
+							<div class="header-text">
+								<h3><i class="fas fa-sparkles"></i> ${game.i18n.localize("SHADOWDARK_EXTRAS.identify.revealed")}</h3>
+							</div>
+						</header>
+						<div class="card-content">
+							<p class="reveal-text">
+								<em>${foundry.utils.escapeHTML(maskedName)}</em>
+								${game.i18n.localize("SHADOWDARK_EXTRAS.identify.isActually")}
+							</p>
+							<p class="item-name"><strong>${foundry.utils.escapeHTML(item.name)}</strong></p>
+							${item.system?.description ? `<div class="item-description">${item.system.description}</div>` : ""}
+						</div>
+					</div>
+				`,
 				speaker: ChatMessage.getSpeaker({ actor: item.actor }),
 			});
 
-			// Route reveal dialog back to the originating player
+			// Route reveal dialog back to the originating player (or show locally if GM cast)
 			if (originatingUserId && originatingUserId !== game.user.id) {
-				await macroExecuteSocket.executeAsUser("showItemRevealForUser", originatingUserId, {
+				await macroExecuteSocket.executeAsUser("sdxShowItemRevealForUser", originatingUserId, {
 					itemUuid: item.uuid,
-					maskedName: maskedName
+					maskedName
 				});
 			} else {
-				// GM is casting, show locally
-				const module = game.modules.get(MODULE_ID);
-				if (module?.api?.showItemReveal) {
-					await module.api.showItemReveal(item, maskedName);
+				const sdxModule = game.modules.get(MODULE_ID);
+				if (sdxModule?.api?.showItemReveal) {
+					await sdxModule.api.showItemReveal(item, maskedName);
 				}
 			}
 
 			ui.notifications.info(game.i18n.format("SHADOWDARK_EXTRAS.identify.success", { name: item.name }));
 		});
 
-		// Handler: Show item reveal dialog on player's client
-		macroExecuteSocket.register("showItemRevealForUser", async ({ itemUuid, maskedName }) => {
+		// Handler: Show item reveal dialog on the originating player's client
+		macroExecuteSocket.register("sdxShowItemRevealForUser", async ({ itemUuid, maskedName }) => {
 			const item = await fromUuid(itemUuid);
 			if (!item) return;
+			const sdxModule = game.modules.get(MODULE_ID);
+			if (sdxModule?.api?.showItemReveal) {
+				await sdxModule.api.showItemReveal(item, maskedName);
+			}
+		});
 
-			const module = game.modules.get(MODULE_ID);
-			if (module?.api?.showItemReveal) {
-				await module.api.showItemReveal(item, maskedName);
+		// Handler: Show identify dialog on the originating player's client (GM routing)
+		macroExecuteSocket.register("sdxShowIdentifyDialog", async ({ targetActorId, unidentifiedItemIds, identifySpellId, casterActorId }) => {
+			const targetActor = game.actors.get(targetActorId);
+			const casterActor = casterActorId ? game.actors.get(casterActorId) : null;
+			const identifySpell = casterActor?.items.get(identifySpellId) ?? null;
+			if (!targetActor) return;
+			const unidentifiedItems = (unidentifiedItemIds || [])
+				.map(id => targetActor.items.get(id))
+				.filter(Boolean);
+			const sdxModule = game.modules.get(MODULE_ID);
+			if (sdxModule?.api?.showIdentifyDialog) {
+				await sdxModule.api.showIdentifyDialog(targetActor, unidentifiedItems, identifySpell);
 			}
 		});
 	}
