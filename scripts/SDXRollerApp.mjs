@@ -735,7 +735,6 @@ export class SDXRollerOverlay extends HandlebarsApplicationMixin(ApplicationV2) 
         ChatMessage.create({
             content: html,
             speaker: { alias: "SDX Roller" },
-            style: CONST.CHAT_MESSAGE_STYLES.OTHER,
             whisper: this.rollData.hideNames ? ChatMessage.getWhisperRecipients("GM") : [],
         });
     }

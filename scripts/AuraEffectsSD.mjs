@@ -1269,7 +1269,6 @@ async function createInteractiveAuraCard(sourceToken, targetToken, trigger, conf
     await ChatMessage.create({
         content: content,
         speaker: ChatMessage.getSpeaker({ token: sourceToken.document }),
-        type: CONST.CHAT_MESSAGE_STYLES.OTHER
     });
 }
 
@@ -1304,7 +1303,6 @@ async function createAuraEffectMessage(sourceToken, targetToken, trigger, result
     await ChatMessage.create({
         content: content,
         speaker: ChatMessage.getSpeaker({ token: sourceToken.document }),
-        type: CONST.CHAT_MESSAGE_STYLES.OTHER
     });
 }
 

@@ -681,7 +681,6 @@ async function createInteractiveTemplateCard(templateDoc, token, trigger, config
     await ChatMessage.create({
         content,
         speaker: ChatMessage.getSpeaker({ actor }),
-        style: CONST.CHAT_MESSAGE_STYLES.OTHER,
         flags: {
             [MODULE_ID]: {
                 isTemplateEffectCard: true,

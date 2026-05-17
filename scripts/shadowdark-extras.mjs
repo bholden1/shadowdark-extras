@@ -19319,7 +19319,6 @@ async function processNPCFeatureDamage(item, actor, token, targetToken, targetAc
 		content: content,
 		speaker: ChatMessage.getSpeaker({ actor }),
 		rolls: [roll],
-		type: CONST.CHAT_MESSAGE_STYLES.OTHER,
 		flags: {
 			"shadowdark": {
 				itemId: item.uuid,

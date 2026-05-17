@@ -597,7 +597,6 @@ async function revertSpellModifications(spellId, casterId) {
 				<p>${message}</p>
 			</div>`,
 			speaker: ChatMessage.getSpeaker({ actor: caster }),
-			type: CONST.CHAT_MESSAGE_STYLES.OTHER
 		});
 	}
 
@@ -745,7 +744,6 @@ export async function endDurationSpell(casterId, instanceId, reason = "expired")
 						<p>${messageText}</p>
 					</div>`,
 					speaker: ChatMessage.getSpeaker({ actor: caster }),
-					type: CONST.CHAT_MESSAGE_STYLES.OTHER
 				});
 			}
 		}
@@ -850,7 +848,6 @@ export async function endDurationSpell(casterId, instanceId, reason = "expired")
 	await ChatMessage.create({
 		content: chatContent,
 		speaker: ChatMessage.getSpeaker({ actor: caster }),
-		type: CONST.CHAT_MESSAGE_STYLES.OTHER
 	});
 
 	ui.notifications.info(`${durationEntry.spellName} has ${reason === "expired" ? "expired" : "ended"}`);
@@ -1124,7 +1121,6 @@ async function handleCombatUpdate(combat, changed, options, userId) {
 		content: content,
 		speaker: ChatMessage.getSpeaker({ actor }),
 		whisper: game.users.filter(u => actor.testUserPermission(u, "OWNER")).map(u => u.id),
-		type: CONST.CHAT_MESSAGE_STYLES.OTHER
 	});
 
 	// Process per-turn damage for focus spells (if configured)
@@ -1216,7 +1212,6 @@ async function applyFocusSpellPerTurnDamage(focusSpell, targetActor, targetToken
 		await ChatMessage.create({
 			content: content,
 			speaker: ChatMessage.getSpeaker({ actor: targetActor }),
-			type: CONST.CHAT_MESSAGE_STYLES.OTHER
 		});
 	} catch (err) {
 		console.error(`shadowdark-extras | Error applying per-turn damage for focus spell: `, err);
@@ -1658,7 +1653,6 @@ async function applyDurationSpellPerTurnDamage(durationSpell, targetActor, targe
 		const chatMessage = await ChatMessage.create({
 			content: content,
 			speaker: ChatMessage.getSpeaker({ actor: game.actors.get(durationSpell.casterId) }),
-			type: CONST.CHAT_MESSAGE_STYLES.OTHER,
 			flags: {
 				[MODULE_ID]: {
 					isDurationDamage: true,
@@ -1894,7 +1888,6 @@ export async function addTargetToDurationSpell(casterId, instanceId, tokenId) {
 	await ChatMessage.create({
 		content: content,
 		speaker: ChatMessage.getSpeaker({ actor: caster }),
-		type: CONST.CHAT_MESSAGE_STYLES.OTHER
 	});
 
 	console.log(`shadowdark-extras | Added ${token.name} to duration spell ${durationEntry.spellName}`);
@@ -2007,7 +2000,6 @@ export async function removeTargetFromDurationSpell(casterId, instanceId, tokenI
 	await ChatMessage.create({
 		content: content,
 		speaker: ChatMessage.getSpeaker({ actor: caster }),
-		type: CONST.CHAT_MESSAGE_STYLES.OTHER
 	});
 
 	console.log(`shadowdark-extras | Removed ${removedTarget.name} from duration spell ${durationEntry.spellName}`);
@@ -2159,7 +2151,6 @@ export async function endFocusSpell(casterId, spellId, reason = "manual") {
 	await ChatMessage.create({
 		content: chatContent,
 		speaker: ChatMessage.getSpeaker({ actor: caster }),
-		type: CONST.CHAT_MESSAGE_STYLES.OTHER
 	});
 
 	// Refresh the actor sheet if open
