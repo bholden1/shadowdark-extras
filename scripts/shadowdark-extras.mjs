@@ -90,7 +90,7 @@ import { initTemplateElevationBadge } from "./TemplateElevationBadgeSD.mjs";
 import { generateDungeon, getGeneratorSettings, setGeneratorSettings, generateRandomSeed } from "./DungeonGeneratorSD.mjs";
 import { generateHexMap, clearGeneratedTiles } from "./HexGeneratorSD.mjs";
 import { getSceneLevelContext, applySceneLevelData, getDungeonBackground } from "./DungeonPainterSD.mjs";
-import { placeChangeLevelRegion, placeDungeonSurface } from "./DungeonRegionsSD.mjs";
+import { placeChangeLevelRegion, placeDungeonSurface, placeDungeonDecor } from "./DungeonRegionsSD.mjs";
 
 
 const MODULE_ID = "shadowdark-extras";
@@ -19070,8 +19070,6 @@ Hooks.on("setup", () => {
 			getGeneratorSettings: getGeneratorSettings,
 			setGeneratorSettings: setGeneratorSettings,
 			generateRandomSeed: generateRandomSeed,
-			placeChangeLevelRegion: placeChangeLevelRegion,
-			placeDungeonSurface: placeDungeonSurface,
 			// --- Hex generator ---
 			generateHexMap: generateHexMap,
 			clearGeneratedTiles: clearGeneratedTiles,
@@ -19079,9 +19077,10 @@ Hooks.on("setup", () => {
 			getSceneLevelContext: getSceneLevelContext,
 			applySceneLevelData: applySceneLevelData,
 			getDungeonBackground: getDungeonBackground,
-			// --- Dungeon Regions ---
+			// --- Dungeon Regions / Decor (multi-level orchestration) ---
 			placeChangeLevelRegion: placeChangeLevelRegion,
-			placeDungeonSurface: placeDungeonSurface
+			placeDungeonSurface: placeDungeonSurface,
+			placeDungeonDecor: placeDungeonDecor
 		};
 		//console.log(`${MODULE_ID} | Module API registered`);
 	}

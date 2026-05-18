@@ -1353,6 +1353,7 @@ export async function generateDungeon(config) {
         }
 
         // 14. Place clutter tiles in rooms
+        const placedClutter = [];
         if (clutter > 0 && layout.roomData.length > 0) {
             // Discover clutter files from known folder
             const clutterFolder = `modules/${MODULE_ID}/assets/Dungeon/clutter`;
@@ -1380,8 +1381,8 @@ export async function generateDungeon(config) {
                     const occupied = new Set();
                     for (let c = 0; c < clutter; c++) {
                         const item = clutterItems[Math.floor(rng() * clutterItems.length)];
-                        const cellsW = Math.ceil(item.w / gridSize);
-                        const cellsH = Math.ceil(item.h / gridSize);
+                        const cellsW = Math.ceil(item.w / GRID_SIZE);
+                        const cellsH = Math.ceil(item.h / GRID_SIZE);
                         const fitW = room.w - (cellsW - 1);
                         const fitH = room.h - (cellsH - 1);
                         if (fitW < 1 || fitH < 1) continue;
@@ -1420,10 +1421,22 @@ export async function generateDungeon(config) {
                             sort: 2,
                             flags: { [MODULE_ID]: { dungeonClutter: true } }
                         });
+
+                        placedClutter.push({
+                            src: item.src,
+                            x: pixelX,
+                            y: pixelY,
+                            width: item.w,
+                            height: item.h,
+                            gridX: gx + offset.x,
+                            gridY: gy + offset.y
+                        });
                     }
                 }
 
-                await createWithElevation("Tile", clutterTiles);
+                if (clutterTiles.length > 0) {
+                    await createWithElevation("Tile", clutterTiles);
+                }
             }
         }
 
@@ -1437,7 +1450,8 @@ export async function generateDungeon(config) {
 
         return {
             stairsUp: placedStairsUp,
-            stairsDown: placedStairsDown
+            stairsDown: placedStairsDown,
+            clutter: placedClutter
         };
     } catch (err) {
         console.error(`${MODULE_ID} | Dungeon generation failed:`, err);

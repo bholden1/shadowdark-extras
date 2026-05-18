@@ -4,6 +4,86 @@ All notable changes to this fork of `shadowdark-extras` are documented here.
 
 Format based loosely on [Keep a Changelog](https://keepachangelog.com/).
 
+## [6.10.13] — 2026-05-18 — Dungeon clutter return value + `placeDungeonDecor` helper
+
+Extends 6.10.12's multi-level orchestration API with clutter (decor)
+support, so MCP / external automation can see exactly what the
+generator placed AND drop additional narrative decor at specific
+positions.
+
+### Added — `generateDungeon` now returns clutter positions
+
+The return value gains a `clutter` array alongside `stairsUp` and
+`stairsDown`:
+
+```js
+{
+  stairsUp:   [{ x, y, gridX, gridY }, ...],
+  stairsDown: [{ x, y, gridX, gridY }, ...],
+  clutter:    [{ src, x, y, width, height, gridX, gridY }, ...]
+}
+```
+
+Each clutter entry includes the source asset path, pixel position,
+pixel size, and grid coords. Useful for downstream tooling that
+wants to know exactly what decor exists where (e.g. for narrative
+agents adding context around a fountain or statue).
+
+### Added — `placeDungeonDecor(opts)` helper on `module.api`
+
+Manual decor placement for cases where the generator's random
+selection isn't enough — agents can drop a specific tile (boss
+throne, trap marker, narrative prop) at a known position. Companion
+to `generateDungeon`'s clutter array.
+
+```js
+await game.modules.get("shadowdark-extras").api.placeDungeonDecor({
+  sceneId,
+  src: "modules/shadowdark-extras/assets/Dungeon/clutter/statue-100x100.png",
+  x: 1500, y: 1000,
+  width: 100, height: 100,
+  centered: true,           // subtract w/2, h/2 from x/y
+  levelId: "<levelId>"      // scope to a specific floor
+});
+// → { id, x, y, width, height }
+```
+
+The helper handles centering, attaches the SDX `dungeonClutter` flag
+(so the tile can be identified or cleared by other module tools),
+and scopes the tile to a specific v14 Level ID.
+
+### Fixed — two bugs in Gemini-supplied clutter loop
+
+Caught and patched during smoke-testing:
+
+1. **`gridSize` was undefined in `generateDungeon` scope.** Clutter
+   placement referenced `gridSize` (lowercase) but only `GRID_SIZE`
+   (module-level constant) is in scope. Result: `Math.ceil(item.w /
+   undefined)` → `NaN`, which propagated and caused the whole
+   generation to throw silently. Fixed to use `GRID_SIZE`.
+
+2. **Typo in occupancy tracking.** The occupancy `Set` was being
+   populated with the wrong row coordinate (`${gx + ox},${oy + oy}`
+   instead of `${gx + ox},${gy + oy}`) — would have caused
+   incorrect collision detection between adjacent decor items.
+   Fixed.
+
+### Cleanup — deduplicated `module.api` registrations
+
+The 6.10.12 wire-up accidentally registered `placeChangeLevelRegion`
+and `placeDungeonSurface` twice in the same `module.api` object.
+Functionally harmless (the second assignment overwrote the first
+with itself) but ugly. Consolidated into a single block.
+
+### Added — `SDX-MCP-DUNGEON-API.md` documentation
+
+New top-level doc covering the dungeon orchestration API surface,
+return shapes, end-to-end workflow with the foundry-mcp-live MCP
+server. Useful reference for agents or anyone building on top of
+the API.
+
+---
+
 ## [6.10.12] — 2026-05-18 — Dungeon elevation fix + multi-level orchestration API
 
 Two related drops shipped together.
