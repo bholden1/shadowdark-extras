@@ -35,7 +35,7 @@ function makeTopLeftTileTexture(src) {
 export function getSceneLevelContext(scene = canvas.scene, preferredLevelId = null) {
     const sceneLevel = preferredLevelId
         ? scene?.levels?.get(preferredLevelId)
-        : ((canvas?.scene?.id === scene?.id ? canvas?.level : null) ?? scene?.levels?.get(scene?._view) ?? scene?.initialLevel ?? scene?.firstLevel);
+        : (canvas?.scene?.id === scene?.id ? canvas?.level : null);
     const rawBottom = sceneLevel?.elevation?.bottom;
     const bottom    = Number(rawBottom ?? 0);
     const rawTop    = sceneLevel?.elevation?.top;
@@ -48,15 +48,34 @@ export function getSceneLevelContext(scene = canvas.scene, preferredLevelId = nu
 }
 
 function getSceneLevelContextForElevation(scene, elevation) {
-    const level = scene?.levels?.find?.(l => Number(l.elevation?.bottom) === Number(elevation));
+    const z = Number(elevation);
+    const level = scene?.levels?.find?.(l => {
+        const bottom = Number(l.elevation?.bottom ?? 0);
+        const top = Number(l.elevation?.top ?? bottom + LEVEL_HEIGHT - 1);
+        return Number.isFinite(z) && Number.isFinite(bottom) && Number.isFinite(top) && z >= bottom && z <= top;
+    });
     return getSceneLevelContext(scene, level?.id ?? null);
 }
 
 export function getDocumentLevelId(doc) {
     if (!doc?.levels) return null;
-    if (typeof doc.levels.values === "function") return doc.levels.values().next().value ?? null;
-    if (Array.isArray(doc.levels)) return doc.levels[0] ?? null;
-    return null;
+    const levels = typeof doc.levels[Symbol.iterator] === "function"
+        ? [...doc.levels]
+        : Array.isArray(doc.levels) ? doc.levels : [];
+    return levels.find(id => id && id !== "defaultLevel0000") ?? levels.find(id => !!id) ?? null;
+}
+
+function resolveLevelContext(scene = canvas.scene, preferredLevelId = null) {
+    if (preferredLevelId) return getSceneLevelContext(scene, preferredLevelId);
+    return getSceneLevelContext(scene);
+}
+
+function documentMatchesLevel(doc, levelContext) {
+    const targetLevelId = levelContext?.levelId ?? null;
+    const docLevelId = getDocumentLevelId(doc);
+    if (!targetLevelId) return !docLevelId;
+    if (docLevelId) return docLevelId === targetLevelId;
+    return targetLevelId === "defaultLevel0000";
 }
 
 /**
@@ -72,16 +91,10 @@ export function applySceneLevelData(doc, type, levelContext = getSceneLevelConte
             "wall-height": { bottom: levelContext.elevation, top: levelContext.rangeTop }
         }, { inplace: false });
     } else {
-        // Tiles / Drawings / etc. sit at the floor of their assigned level.
-        // Level membership is encoded by `doc.levels = [levelId]`, so setting
-        // `doc.elevation = levelContext.elevation` double-encodes the slab
-        // offset — making the placeable render at level.bottom + level.bottom.
-        // The correct semantics: elevation = 0 relative to whichever level
-        // the doc is on. Special-case layering (e.g. background drawing one
-        // step below the floor) is handled by callers writing `doc.elevation`
-        // explicitly BEFORE this point — but applySceneLevelData itself owns
-        // the default and that default is 0.
-        doc.elevation = 0;
+        // MCP on Foundry v14.361 verified level membership controls which native
+        // level renders non-wall placeables. Elevation is relative within that
+        // level, so default to 0 but preserve explicit caller offsets.
+        if (doc.elevation === undefined || doc.elevation === null) doc.elevation = 0;
         doc.flags = foundry.utils.mergeObject(doc.flags ?? {}, {
             levels: { rangeTop: levelContext.rangeTop }
         }, { inplace: false });
@@ -1431,18 +1444,20 @@ function destroySelectionRect() {
 /**
  * Ensure a full-scene background Drawing exists at the given elevation
  */
-export async function ensureBackgroundDrawing(scene, elevation, backgroundSetting) {
+export async function ensureBackgroundDrawing(scene, elevation, backgroundSetting, preferredLevelId = null) {
     if (!backgroundSetting || backgroundSetting === "none") return;
 
-    const levelContext = getSceneLevelContextForElevation(scene, elevation);
+    const levelContext = preferredLevelId
+        ? resolveLevelContext(scene, preferredLevelId)
+        : getSceneLevelContextForElevation(scene, elevation);
     const bgElevation = elevation - 1;
-    const rangeTop = elevation;
+    const rangeTop = levelContext.rangeTop;
 
     // Check if a background drawing already exists at this elevation
     const existing = scene.drawings.find(d =>
         d.flags?.[MODULE_ID]?.dungeonBackground &&
         d.elevation === bgElevation &&
-        (!levelContext.levelId || d.levels?.has?.(levelContext.levelId))
+        documentMatchesLevel(d, levelContext)
     );
 
     // Parse background setting
@@ -1590,31 +1605,8 @@ async function handleRectangleFill(startPos, endPos, isDeleting) {
 
     // GM: execute directly
     if (isDeleting) {
-        // Detect current elevation by creating a temporary probe tile
-        let currentElevation = getCurrentElevation();
+        const levelContext = resolveLevelContext(scene);
 
-        // Create and immediately delete a probe tile to detect Levels' current elevation
-        const probeTile = await scene.createEmbeddedDocuments("Tile", [applySceneLevelData({
-            texture: makeTopLeftTileTexture(_selectedFloorTile || `modules/${MODULE_ID}/assets/Dungeon/floor_tiles/stone_floor_00.png`),
-            x: minGx * gridSize,
-            y: minGy * gridSize,
-            width: gridSize,
-            height: gridSize,
-            hidden: true,
-            flags: { [MODULE_ID]: { probe: true } }
-        }, "Tile")]);
-
-        if (probeTile && probeTile.length > 0) {
-            currentElevation = probeTile[0].elevation ?? 0;
-            // Delete the probe tile
-            await scene.deleteEmbeddedDocuments("Tile", [probeTile[0].id]);
-        }
-
-        console.log(`${MODULE_ID} | Deleting at detected elevation: ${currentElevation}`);
-
-        const ELEVATION_TOLERANCE = 5;
-
-        // Delete floor tiles in range at current elevation only
         const tilesToDelete = [];
         const doorsToDelete = [];
 
@@ -1623,31 +1615,26 @@ async function handleRectangleFill(startPos, endPos, isDeleting) {
 
             const tileGx = Math.floor(tile.x / gridSize);
             const tileGy = Math.floor(tile.y / gridSize);
-            const tileElev = tile.elevation ?? 0;
 
-            // Only delete tiles at the current elevation
             if (tileGx >= minGx && tileGx <= maxGx && tileGy >= minGy && tileGy <= maxGy &&
-                Math.abs(tileElev - currentElevation) < ELEVATION_TOLERANCE) {
+                documentMatchesLevel(tile, levelContext)) {
                 tilesToDelete.push(tile.id);
             }
         }
 
-        // Also delete doors in range at current elevation
         for (const wall of scene.walls) {
             if (!wall.door || wall.door === 0) continue;
 
             const mx = (wall.c[0] + wall.c[2]) / 2;
             const my = (wall.c[1] + wall.c[3]) / 2;
-            const wallBottom = wall.flags?.["wall-height"]?.bottom ?? 0;
 
-            // Only delete doors at the current elevation
             if (mx >= minPx && mx <= maxPx && my >= minPy && my <= maxPy &&
-                Math.abs(wallBottom - currentElevation) < ELEVATION_TOLERANCE) {
+                documentMatchesLevel(wall, levelContext)) {
                 doorsToDelete.push(wall.id);
             }
         }
 
-        console.log(`${MODULE_ID} | Deleting ${tilesToDelete.length} tiles and ${doorsToDelete.length} doors at elevation ${currentElevation}`);
+        console.log(`${MODULE_ID} | Deleting ${tilesToDelete.length} tiles and ${doorsToDelete.length} doors on level ${levelContext.levelId ?? "none"}`);
 
         if (tilesToDelete.length > 0) {
             await scene.deleteEmbeddedDocuments("Tile", tilesToDelete);
@@ -1662,51 +1649,25 @@ async function handleRectangleFill(startPos, endPos, isDeleting) {
             return;
         }
 
-        // Detect current elevation by creating a probe tile and reading what Levels sets
-        // This is the most reliable way to get the current Levels selection
-        let currentElevation = getCurrentElevation();
-
-        // Create a probe tile to detect what elevation Levels will assign
-        const levelContext = getSceneLevelContext(scene);
-        const probeTile = await scene.createEmbeddedDocuments("Tile", [applySceneLevelData({
-            texture: makeTopLeftTileTexture(_selectedFloorTile),
-            x: minGx * gridSize,
-            y: minGy * gridSize,
-            width: gridSize,
-            height: gridSize,
-            flags: { [MODULE_ID]: { dungeonFloor: true } }
-        }, "Tile", levelContext)]);
-
-        if (probeTile && probeTile.length > 0) {
-            // Read the elevation that Levels assigned
-            currentElevation = probeTile[0].elevation ?? 0;
-            console.log(`${MODULE_ID} | Detected elevation from Levels: ${currentElevation}`);
-        }
+        const levelContext = resolveLevelContext(scene);
+        const currentElevation = 0;
 
         const tilesToCreate = [];
         const tilesToUpdate = [];
 
-        // Define elevation tolerance - tiles within this range are considered "same level"
-        const ELEVATION_TOLERANCE = 5;
-
         for (let gx = minGx; gx <= maxGx; gx++) {
             for (let gy = minGy; gy <= maxGy; gy++) {
-                // Skip the probe tile position (already created)
-                if (gx === minGx && gy === minGy) continue;
-
-                // Only find existing tile if it's at the SAME elevation (allow stacking at different levels)
+                // Only update an existing floor tile on the same native level.
                 const existing = scene.tiles.find(t =>
                     Math.floor(t.x / gridSize) === gx &&
                     Math.floor(t.y / gridSize) === gy &&
                     t.texture?.src?.includes("Dungeon/floor_tiles") &&
-                    Math.abs((t.elevation ?? 0) - currentElevation) < ELEVATION_TOLERANCE
+                    documentMatchesLevel(t, levelContext)
                 );
 
                 if (existing) {
-                    // Update existing tile texture at same elevation
                     tilesToUpdate.push(applySceneLevelData({ _id: existing.id, texture: makeTopLeftTileTexture(_selectedFloorTile) }, "Tile", levelContext));
                 } else {
-                    // Create new tile (allows stacking floors at different elevations)
                     tilesToCreate.push(applySceneLevelData({
                         texture: makeTopLeftTileTexture(_selectedFloorTile),
                         x: gx * gridSize,
@@ -1730,7 +1691,7 @@ async function handleRectangleFill(startPos, endPos, isDeleting) {
         }
 
         // Create background drawing if configured
-        await ensureBackgroundDrawing(scene, currentElevation, _selectedBackground);
+        await ensureBackgroundDrawing(scene, currentElevation, _selectedBackground, levelContext.levelId);
     }
 
     // Rebuild walls
@@ -1800,21 +1761,23 @@ async function handleDoorClick(event, isDeleting) {
 
     const gx = Math.floor(pos.x / gridSize);
     const gy = Math.floor(pos.y / gridSize);
+    const levelContext = resolveLevelContext(scene);
 
     // Check if there's a floor tile here
     const hasTile = scene.tiles.some(t =>
         Math.floor(t.x / gridSize) === gx &&
         Math.floor(t.y / gridSize) === gy &&
-        t.texture?.src?.includes("Dungeon/floor_tiles")
+        t.texture?.src?.includes("Dungeon/floor_tiles") &&
+        documentMatchesLevel(t, levelContext)
     );
 
     if (!hasTile && !isDeleting) return;
 
     // Check neighbors
-    const hasN = scene.tiles.some(t => Math.floor(t.x / gridSize) === gx && Math.floor(t.y / gridSize) === gy - 1 && t.texture?.src?.includes("Dungeon/floor_tiles"));
-    const hasS = scene.tiles.some(t => Math.floor(t.x / gridSize) === gx && Math.floor(t.y / gridSize) === gy + 1 && t.texture?.src?.includes("Dungeon/floor_tiles"));
-    const hasE = scene.tiles.some(t => Math.floor(t.x / gridSize) === gx + 1 && Math.floor(t.y / gridSize) === gy && t.texture?.src?.includes("Dungeon/floor_tiles"));
-    const hasW = scene.tiles.some(t => Math.floor(t.x / gridSize) === gx - 1 && Math.floor(t.y / gridSize) === gy && t.texture?.src?.includes("Dungeon/floor_tiles"));
+    const hasN = scene.tiles.some(t => Math.floor(t.x / gridSize) === gx && Math.floor(t.y / gridSize) === gy - 1 && t.texture?.src?.includes("Dungeon/floor_tiles") && documentMatchesLevel(t, levelContext));
+    const hasS = scene.tiles.some(t => Math.floor(t.x / gridSize) === gx && Math.floor(t.y / gridSize) === gy + 1 && t.texture?.src?.includes("Dungeon/floor_tiles") && documentMatchesLevel(t, levelContext));
+    const hasE = scene.tiles.some(t => Math.floor(t.x / gridSize) === gx + 1 && Math.floor(t.y / gridSize) === gy && t.texture?.src?.includes("Dungeon/floor_tiles") && documentMatchesLevel(t, levelContext));
+    const hasW = scene.tiles.some(t => Math.floor(t.x / gridSize) === gx - 1 && Math.floor(t.y / gridSize) === gy && t.texture?.src?.includes("Dungeon/floor_tiles") && documentMatchesLevel(t, levelContext));
 
     // Determine door placement
     const isVerticalCorridor = hasN && hasS && !hasE && !hasW;
@@ -1883,7 +1846,8 @@ async function handleDoorClick(event, isDeleting) {
                 sceneId: scene.id,
                 x1, y1, x2, y2,
                 wallTilePath: _selectedWallTile,
-                noWalls: _noFoundryWalls
+                noWalls: _noFoundryWalls,
+                levelId: levelContext.levelId
             });
         } else {
             await _dungeonSocket.executeAsGM("dungeonPlaceDoor", {
@@ -1891,7 +1855,8 @@ async function handleDoorClick(event, isDeleting) {
                 x1, y1, x2, y2,
                 doorTexture,
                 wallTilePath: _selectedWallTile,
-                noWalls: _noFoundryWalls
+                noWalls: _noFoundryWalls,
+                levelId: levelContext.levelId
             });
         }
         return;
@@ -1905,7 +1870,7 @@ async function handleDoorClick(event, isDeleting) {
             Math.abs(c[2] - x2) < tolerance && Math.abs(c[3] - y2) < tolerance);
         const match2 = (Math.abs(c[0] - x2) < tolerance && Math.abs(c[1] - y2) < tolerance &&
             Math.abs(c[2] - x1) < tolerance && Math.abs(c[3] - y1) < tolerance);
-        return match1 || match2;
+        return (match1 || match2) && documentMatchesLevel(w, levelContext);
     });
 
     if (isDeleting) {
@@ -1927,7 +1892,7 @@ async function handleDoorClick(event, isDeleting) {
                 scheduleWallRebuild(scene);
             }
         } else {
-            const wallData = {
+            const wallData = applySceneLevelData({
                 c: [x1, y1, x2, y2],
                 door: 1,
                 ds: 0,
@@ -1935,12 +1900,9 @@ async function handleDoorClick(event, isDeleting) {
                 move: 20,
                 sound: 20,
                 doorSound: "woodBasic"
-            };
+            }, "Wall", levelContext);
             if (doorTexture) {
-                wallData.animation = {
-                    type: "swing",
-                    texture: doorTexture
-                };
+                wallData.animation = { type: "swing", texture: doorTexture };
             }
             await scene.createEmbeddedDocuments("Wall", [wallData]);
             scheduleWallRebuild(scene);
@@ -1962,117 +1924,63 @@ function scheduleWallRebuild(scene) {
 }
 
 /**
- * Rebuild walls around floor tiles (elevation-aware for Levels module compatibility)
+ * Rebuild walls around floor tiles for the active native level.
  */
 async function rebuildWalls(scene) {
     if (!scene) return;
+    await rebuildWallsForLevel(scene, resolveLevelContext(scene), { noWalls: _noFoundryWalls });
+}
 
-    const gridSize = canvas.grid.size || canvas.grid.size;
-    const LEVEL_HEIGHT = 10; // Each level is 10 units tall
+async function rebuildWallsForLevel(scene, levelContext, { wallTilePath = null, noWalls = _noFoundryWalls, logPrefix = "" } = {}) {
+    if (!scene || !levelContext) return;
 
-    // 1. Scan all floor tiles and group by elevation
-    const floorsByElevation = new Map(); // elevation -> Set of "gx,gy"
+    const gridSize = scene.grid?.size || canvas.grid?.size || GRID_SIZE;
+    const originalWallTile = _selectedWallTile;
+    if (wallTilePath) _selectedWallTile = wallTilePath;
 
-    for (const tile of scene.tiles) {
-        if (tile.texture?.src?.includes("Dungeon/floor_tiles")) {
-            const gx = Math.floor(tile.x / gridSize);
-            const gy = Math.floor(tile.y / gridSize);
-            const elevation = tile.elevation ?? 0;
-            const key = `${gx},${gy}`;
-
-            console.log(`${MODULE_ID} | Tile at ${key} has elevation: ${tile.elevation} (using: ${elevation})`);
-
-            if (!floorsByElevation.has(elevation)) {
-                floorsByElevation.set(elevation, new Set());
-            }
-            floorsByElevation.get(elevation).add(key);
+    try {
+        const floors = new Set();
+        for (const tile of scene.tiles) {
+            if (!tile.texture?.src?.includes("Dungeon/floor_tiles")) continue;
+            if (!documentMatchesLevel(tile, levelContext)) continue;
+            floors.add(`${Math.floor(tile.x / gridSize)},${Math.floor(tile.y / gridSize)}`);
         }
-    }
 
-    // Get all unique elevations from floor tiles
-    const floorElevations = new Set(floorsByElevation.keys());
-
-    // Also collect elevations from existing dungeon walls and wall drawings
-    // so orphaned ones (where all floor tiles were deleted) get cleaned up
-    const allDungeonElevations = new Set(floorElevations);
-
-    for (const w of scene.walls) {
-        if (w.door && w.door > 0) continue;
-        const bottom = w.flags?.["wall-height"]?.bottom;
-        if (bottom !== undefined) allDungeonElevations.add(bottom);
-    }
-    for (const d of scene.drawings) {
-        if (d.flags?.[MODULE_ID]?.dungeonWall) {
-            allDungeonElevations.add(d.elevation ?? 0);
+        if (!noWalls) {
+            const wallsToDelete = scene.walls
+                .filter(w => {
+                    if (w.door && w.door > 0) return false;
+                    if (w.flags?.[MODULE_ID]?.dungeonIntWall) return false;
+                    if (w.flags?.["wall-height"]?.bottom === undefined) return false;
+                    return documentMatchesLevel(w, levelContext);
+                })
+                .map(w => w.id);
+            if (wallsToDelete.length > 0) await scene.deleteEmbeddedDocuments("Wall", wallsToDelete);
         }
-    }
 
-    const elevations = Array.from(allDungeonElevations).sort((a, b) => a - b);
-
-    console.log(`${MODULE_ID} | Found ${floorElevations.size} floor elevation levels, ${elevations.length} total dungeon elevations: [${elevations.join(', ')}]`);
-    for (const [elev, floors] of floorsByElevation) {
-        console.log(`${MODULE_ID} |   Elevation ${elev}: ${floors.size} floor tiles`);
-    }
-
-    // 2. Delete existing dungeon walls (non-doors) - only those created by us
-    // We identify our walls by checking if they have wall-height flags matching our level pattern
-    if (!_noFoundryWalls) {
-        const wallsToDelete = scene.walls
-            .filter(w => {
-                if (w.door && w.door > 0) return false; // Keep doors
-                if (w.flags?.[MODULE_ID]?.dungeonIntWall) return false; // Keep interior walls
-                // Check if this wall was created by dungeon painter (has wall-height flags with our pattern)
-                const bottom = w.flags?.["wall-height"]?.bottom;
-                if (bottom === undefined) return false; // Not a levels-aware wall, might be manual
-                // Check if bottom matches any of our elevation levels
-                return elevations.some(elev => bottom === elev);
+        const drawingsToDelete = scene.drawings
+            .filter(d => {
+                if (!d.flags?.[MODULE_ID]?.dungeonWall) return false;
+                if (d.flags?.[MODULE_ID]?.dungeonIntWall) return false;
+                return documentMatchesLevel(d, levelContext);
             })
-            .map(w => w.id);
+            .map(d => d.id);
+        if (drawingsToDelete.length > 0) await scene.deleteEmbeddedDocuments("Drawing", drawingsToDelete);
 
-        console.log(`${MODULE_ID} | Deleting ${wallsToDelete.length} walls with elevations matching [${elevations.join(', ')}]`);
-        if (wallsToDelete.length > 0) {
-            await scene.deleteEmbeddedDocuments("Wall", wallsToDelete);
+        if (floors.size === 0) {
+            console.log(`${MODULE_ID} | ${logPrefix}No floors to rebuild on level "${levelContext.levelId ?? "none"}"`);
+            return;
         }
-    }
 
-    // 3. Delete existing wall drawings at matching elevations (skip interior walls)
-    const drawingsToDelete = scene.drawings
-        .filter(d => {
-            if (!d.flags?.[MODULE_ID]?.dungeonWall) return false;
-            if (d.flags?.[MODULE_ID]?.dungeonIntWall) return false; // preserve interior walls
-            const drawingElev = d.elevation ?? 0;
-            return elevations.some(elev => drawingElev === elev);
-        })
-        .map(d => d.id);
-
-    console.log(`${MODULE_ID} | Deleting ${drawingsToDelete.length} drawings with elevations matching [${elevations.join(', ')}]`);
-    if (drawingsToDelete.length > 0) {
-        await scene.deleteEmbeddedDocuments("Drawing", drawingsToDelete);
-    }
-
-    // 4. If no floors, done
-    if (floorsByElevation.size === 0) return;
-
-    // 5. Process each elevation level separately
-    let totalWalls = 0;
-    let totalDrawings = 0;
-
-    for (const [elevation, floors] of floorsByElevation) {
-        const wallHeightBottom = elevation;
-        const wallHeightTop = elevation + LEVEL_HEIGHT - 1; // e.g., 0-9, 10-19, etc.
-
-        console.log(`${MODULE_ID} | Processing elevation ${elevation}: ${floors.size} floors, wall-height ${wallHeightBottom}/${wallHeightTop}`);
-
-        // Find doors at this elevation
+        const wallHeightBottom = levelContext.elevation;
+        const wallHeightTop = levelContext.rangeTop;
+        const tolerance = 2;
         const entranceEdges = [];
         const existingDoors = scene.walls.filter(w => {
             if (!w.door || w.door === 0) return false;
-            const doorBottom = w.flags?.["wall-height"]?.bottom ?? 0;
-            // Door is at this level if its bottom matches our elevation (with some tolerance)
-            return Math.abs(doorBottom - elevation) < LEVEL_HEIGHT;
+            return documentMatchesLevel(w, levelContext);
         });
 
-        const tolerance = 2;
         for (const door of existingDoors) {
             const [x1, y1, x2, y2] = door.c;
             const midX = (x1 + x2) / 2;
@@ -2095,96 +2003,61 @@ async function rebuildWalls(scene) {
         }
 
         const entranceSet = new Set(entranceEdges.map(e => `${e.x},${e.y},${e.dir}`));
-        const levelContext = getSceneLevelContextForElevation(scene, elevation);
+        let totalWalls = 0;
+        let totalDrawings = 0;
 
-        // 6. Generate and create walls for this elevation
-        if (!_noFoundryWalls) {
+        if (!noWalls) {
             const wallsData = generateWallsWithElevation(floors, entranceSet, gridSize, WALL_THICKNESS, wallHeightBottom, wallHeightTop)
                 .map(w => applySceneLevelData(w, "Wall", levelContext));
 
-            // Generate filler walls for doors at this elevation
             if (existingDoors.length > 0 && WALL_THICKNESS > 0) {
                 for (const door of existingDoors) {
                     const [px1, py1, px2, py2] = door.c;
 
                     if (Math.abs(py1 - py2) < tolerance) {
-                        // Horizontal door
                         const minX = Math.min(px1, px2);
                         const maxX = Math.max(px1, px2);
                         const y = py1;
                         wallsData.push(applySceneLevelData({
                             c: [minX - WALL_THICKNESS, y, minX, y],
-                            light: 20, move: 20, sound: 20,
-                            flags: { "wall-height": { bottom: wallHeightBottom, top: wallHeightTop } }
+                            light: 20, move: 20, sound: 20
                         }, "Wall", levelContext));
                         wallsData.push(applySceneLevelData({
                             c: [maxX, y, maxX + WALL_THICKNESS, y],
-                            light: 20, move: 20, sound: 20,
-                            flags: { "wall-height": { bottom: wallHeightBottom, top: wallHeightTop } }
+                            light: 20, move: 20, sound: 20
                         }, "Wall", levelContext));
                     } else if (Math.abs(px1 - px2) < tolerance) {
-                        // Vertical door
                         const minY = Math.min(py1, py2);
                         const maxY = Math.max(py1, py2);
                         const x = px1;
                         wallsData.push(applySceneLevelData({
                             c: [x, minY - WALL_THICKNESS, x, minY],
-                            light: 20, move: 20, sound: 20,
-                            flags: { "wall-height": { bottom: wallHeightBottom, top: wallHeightTop } }
+                            light: 20, move: 20, sound: 20
                         }, "Wall", levelContext));
                         wallsData.push(applySceneLevelData({
                             c: [x, maxY, x, maxY + WALL_THICKNESS],
-                            light: 20, move: 20, sound: 20,
-                            flags: { "wall-height": { bottom: wallHeightBottom, top: wallHeightTop } }
+                            light: 20, move: 20, sound: 20
                         }, "Wall", levelContext));
                     }
                 }
             }
 
-            // Create walls in batches
             if (wallsData.length > 0) {
-                console.log(`${MODULE_ID} |   Creating ${wallsData.length} walls at elevation ${wallHeightBottom}/${wallHeightTop}`);
                 const chunkSize = 100;
                 for (let i = 0; i < wallsData.length; i += chunkSize) {
-                    // Create walls first
-                    const created = await scene.createEmbeddedDocuments("Wall", wallsData.slice(i, i + chunkSize));
-
-                    // Then update wall-height flags to bypass Levels hooks that might override during creation
-                    const updates = created.map(w => ({
-                        _id: w.id,
-                        "flags.wall-height.bottom": wallHeightBottom,
-                        "flags.wall-height.top": wallHeightTop
-                    }));
-                    if (updates.length > 0) {
-                        await scene.updateEmbeddedDocuments("Wall", updates);
-                    }
+                    await scene.createEmbeddedDocuments("Wall", wallsData.slice(i, i + chunkSize));
                 }
                 totalWalls += wallsData.length;
             }
         }
 
-        // 7. Generate wall visuals for this elevation
-        const drawingsData = generateWallVisualsWithElevation(floors, entranceSet, gridSize, WALL_THICKNESS, elevation, wallHeightTop)
+        const drawingsData = generateWallVisualsWithElevation(floors, entranceSet, gridSize, WALL_THICKNESS, 0, wallHeightTop)
             .map(d => applySceneLevelData(d, "Drawing", levelContext));
 
         if (drawingsData.length > 0) {
-            console.log(`${MODULE_ID} |   Creating ${drawingsData.length} drawings at elevation ${elevation}, rangeTop ${wallHeightTop}`);
             const chunkSize = 100;
             for (let i = 0; i < drawingsData.length; i += chunkSize) {
-                // Create drawings first
                 const created = await scene.createEmbeddedDocuments("Drawing", drawingsData.slice(i, i + chunkSize));
-
-                // Then update elevation to bypass Levels hooks that might override it during creation
-                const updates = created.map(d => ({
-                    _id: d.id,
-                    elevation: elevation,
-                    "flags.levels.rangeTop": wallHeightTop
-                }));
-                if (updates.length > 0) {
-                    await scene.updateEmbeddedDocuments("Drawing", updates);
-                }
-
-                // Apply wall shadows if enabled
                 if (_wallShadows && window.TokenMagic) {
                     const shadowParams = [{
                         filterType: "shadow",
@@ -2202,9 +2075,11 @@ async function rebuildWalls(scene) {
             }
             totalDrawings += drawingsData.length;
         }
-    }
 
-    console.log(`${MODULE_ID} | Rebuilt ${_noFoundryWalls ? "0 (disabled)" : totalWalls} walls and ${totalDrawings} wall visuals across ${elevations.length} elevation level(s)`);
+        console.log(`${MODULE_ID} | ${logPrefix}Rebuilt ${noWalls ? "0 (disabled)" : totalWalls} walls and ${totalDrawings} wall visuals on level "${levelContext.levelId ?? "none"}"`);
+    } finally {
+        _selectedWallTile = originalWallTile;
+    }
 }
 
 /**
@@ -2465,23 +2340,8 @@ async function _gmFillRectangle(data) {
     if (!scene) return { success: false, error: "Scene not found" };
 
     const gridSize = scene.grid.size || canvas.grid.size;
-    const levelContext = getSceneLevelContext(scene, levelId);
-
-    // Detect elevation via probe tile (same pattern as handleRectangleFill)
-    let elevation = levelContext.elevation;
-    const probeTile = await scene.createEmbeddedDocuments("Tile", [applySceneLevelData({
-        texture: makeTopLeftTileTexture(floorTilePath),
-        x: minGx * gridSize,
-        y: minGy * gridSize,
-        width: gridSize,
-        height: gridSize,
-        hidden: true,
-        flags: { [MODULE_ID]: { dungeonFloor: true } }
-    }, "Tile", levelContext)]);
-    if (probeTile && probeTile.length > 0) {
-        elevation = probeTile[0].elevation ?? 0;
-        await scene.deleteEmbeddedDocuments("Tile", [probeTile[0].id]);
-    }
+    const levelContext = resolveLevelContext(scene, levelId);
+    const elevation = 0;
 
     const tilesToCreate = [];
     const tilesToUpdate = [];
@@ -2491,7 +2351,8 @@ async function _gmFillRectangle(data) {
             const existing = scene.tiles.find(t =>
                 Math.floor(t.x / gridSize) === gx &&
                 Math.floor(t.y / gridSize) === gy &&
-                t.texture?.src?.includes("Dungeon/floor_tiles")
+                t.texture?.src?.includes("Dungeon/floor_tiles") &&
+                documentMatchesLevel(t, levelContext)
             );
 
             if (existing) {
@@ -2521,7 +2382,7 @@ async function _gmFillRectangle(data) {
 
     // Create background drawing if configured
     if (backgroundSetting) {
-        await ensureBackgroundDrawing(scene, elevation, backgroundSetting);
+        await ensureBackgroundDrawing(scene, elevation, backgroundSetting, levelContext.levelId);
     }
 
     // Rebuild walls with the provided settings
@@ -2539,6 +2400,7 @@ async function _gmDeleteRectangle(data) {
     if (!scene) return { success: false, error: "Scene not found" };
 
     const gridSize = scene.grid.size || canvas.grid.size;
+    const levelContext = resolveLevelContext(scene, levelId);
 
     if (!doorsOnly) {
         // Delete floor tiles in range
@@ -2549,7 +2411,8 @@ async function _gmDeleteRectangle(data) {
             const tileGx = Math.floor(tile.x / gridSize);
             const tileGy = Math.floor(tile.y / gridSize);
 
-            if (tileGx >= minGx && tileGx <= maxGx && tileGy >= minGy && tileGy <= maxGy) {
+            if (tileGx >= minGx && tileGx <= maxGx && tileGy >= minGy && tileGy <= maxGy &&
+                documentMatchesLevel(tile, levelContext)) {
                 tilesToDelete.push(tile.id);
             }
         }
@@ -2567,7 +2430,8 @@ async function _gmDeleteRectangle(data) {
         const mx = (wall.c[0] + wall.c[2]) / 2;
         const my = (wall.c[1] + wall.c[3]) / 2;
 
-        if (mx >= minPx && mx <= maxPx && my >= minPy && my <= maxPy) {
+        if (mx >= minPx && mx <= maxPx && my >= minPy && my <= maxPy &&
+            documentMatchesLevel(wall, levelContext)) {
             doorsToDelete.push(wall.id);
         }
     }
@@ -2591,6 +2455,7 @@ async function _gmPlaceDoor(data) {
     if (!scene) return { success: false, error: "Scene not found" };
 
     const tolerance = 2;
+    const levelContext = resolveLevelContext(scene, levelId);
 
     // Check for existing wall at coords
     const existingWall = scene.walls.find(w => {
@@ -2599,7 +2464,7 @@ async function _gmPlaceDoor(data) {
             Math.abs(c[2] - x2) < tolerance && Math.abs(c[3] - y2) < tolerance);
         const match2 = (Math.abs(c[0] - x2) < tolerance && Math.abs(c[1] - y2) < tolerance &&
             Math.abs(c[2] - x1) < tolerance && Math.abs(c[3] - y1) < tolerance);
-        return match1 || match2;
+        return (match1 || match2) && documentMatchesLevel(w, levelContext);
     });
 
     if (existingWall) {
@@ -2623,7 +2488,7 @@ async function _gmPlaceDoor(data) {
             sound: 20,
             doorSound: "woodBasic",
             flags: {}
-        }, "Wall", getSceneLevelContext(scene, levelId));
+        }, "Wall", levelContext);
         if (doorTexture) {
             wallData.animation = { type: "swing", texture: doorTexture };
         }
@@ -2645,6 +2510,7 @@ async function _gmRemoveDoor(data) {
     if (!scene) return { success: false, error: "Scene not found" };
 
     const tolerance = 2;
+    const levelContext = resolveLevelContext(scene, levelId);
 
     const existingWall = scene.walls.find(w => {
         if (!w.door || w.door === 0) return false;
@@ -2653,7 +2519,7 @@ async function _gmRemoveDoor(data) {
             Math.abs(c[2] - x2) < tolerance && Math.abs(c[3] - y2) < tolerance);
         const match2 = (Math.abs(c[0] - x2) < tolerance && Math.abs(c[1] - y2) < tolerance &&
             Math.abs(c[2] - x1) < tolerance && Math.abs(c[3] - y1) < tolerance);
-        return match1 || match2;
+        return (match1 || match2) && documentMatchesLevel(w, levelContext);
     });
 
     if (existingWall) {
@@ -2680,221 +2546,10 @@ async function _gmRebuildWalls(data) {
 }
 
 /**
- * Internal wall rebuild function used by GM handlers (elevation-aware for Levels compatibility)
+ * Internal wall rebuild function used by GM handlers.
  */
 async function _gmRebuildWallsInternal(scene, wallTilePath, noWalls, preferredLevelId = null) {
-    const gridSize = scene.grid.size || canvas.grid.size;
-    const LEVEL_HEIGHT = 10; // Each level is 10 units tall
-
-    // Store the wall tile path for use by generate functions
-    const originalWallTile = _selectedWallTile;
-    if (wallTilePath) {
-        _selectedWallTile = wallTilePath;
-    }
-
-    // 1. Scan all floor tiles and group by elevation
-    const floorsByElevation = new Map(); // elevation -> Set of "gx,gy"
-
-    for (const tile of scene.tiles) {
-        if (tile.texture?.src?.includes("Dungeon/floor_tiles")) {
-            const gx = Math.floor(tile.x / gridSize);
-            const gy = Math.floor(tile.y / gridSize);
-            const elevation = tile.elevation ?? 0;
-            const key = `${gx},${gy}`;
-
-            console.log(`${MODULE_ID} | [Socket] Tile at ${key} has elevation: ${tile.elevation} (using: ${elevation})`);
-
-            if (!floorsByElevation.has(elevation)) {
-                floorsByElevation.set(elevation, new Set());
-            }
-            floorsByElevation.get(elevation).add(key);
-        }
-    }
-
-    // Get all unique elevations from floor tiles
-    const floorElevations = new Set(floorsByElevation.keys());
-
-    // Also collect elevations from existing dungeon walls and wall drawings
-    // so orphaned ones (where all floor tiles were deleted) get cleaned up
-    const allDungeonElevations = new Set(floorElevations);
-
-    for (const w of scene.walls) {
-        if (w.door && w.door > 0) continue;
-        const bottom = w.flags?.["wall-height"]?.bottom;
-        if (bottom !== undefined) allDungeonElevations.add(bottom);
-    }
-    for (const d of scene.drawings) {
-        if (d.flags?.[MODULE_ID]?.dungeonWall) {
-            allDungeonElevations.add(d.elevation ?? 0);
-        }
-    }
-
-    const elevations = Array.from(allDungeonElevations).sort((a, b) => a - b);
-
-    console.log(`${MODULE_ID} | [Socket] Found ${floorElevations.size} floor elevation levels, ${elevations.length} total dungeon elevations: [${elevations.join(', ')}]`);
-
-    // 2. Delete existing dungeon walls (non-doors) at matching elevations
-    if (!noWalls) {
-        const wallsToDelete = scene.walls
-            .filter(w => {
-                if (w.door && w.door > 0) return false; // Keep doors
-                if (w.flags?.[MODULE_ID]?.dungeonIntWall) return false; // Keep interior walls
-                const bottom = w.flags?.["wall-height"]?.bottom;
-                if (bottom === undefined) return false; // Not a levels-aware wall
-                return elevations.some(elev => bottom === elev);
-            })
-            .map(w => w.id);
-
-        console.log(`${MODULE_ID} | [Socket] Deleting ${wallsToDelete.length} walls`);
-        if (wallsToDelete.length > 0) {
-            await scene.deleteEmbeddedDocuments("Wall", wallsToDelete);
-        }
-    }
-
-    // 3. Delete existing wall drawings at matching elevations (skip interior walls)
-    const drawingsToDelete = scene.drawings
-        .filter(d => {
-            if (!d.flags?.[MODULE_ID]?.dungeonWall) return false;
-            if (d.flags?.[MODULE_ID]?.dungeonIntWall) return false; // preserve interior walls
-            const drawingElev = d.elevation ?? 0;
-            return elevations.some(elev => drawingElev === elev);
-        })
-        .map(d => d.id);
-
-    console.log(`${MODULE_ID} | [Socket] Deleting ${drawingsToDelete.length} drawings`);
-    if (drawingsToDelete.length > 0) {
-        await scene.deleteEmbeddedDocuments("Drawing", drawingsToDelete);
-    }
-
-    // 4. If no floors, restore original wall tile and done
-    if (floorsByElevation.size === 0) {
-        _selectedWallTile = originalWallTile;
-        return;
-    }
-
-    // 5. Process each elevation level separately
-    const tolerance = 2;
-
-    for (const [elevation, floors] of floorsByElevation) {
-        const wallHeightBottom = elevation;
-        const wallHeightTop = elevation + LEVEL_HEIGHT - 1;
-
-        console.log(`${MODULE_ID} | [Socket] Processing elevation ${elevation}: ${floors.size} floors, wall-height ${wallHeightBottom}/${wallHeightTop}`);
-
-        // Find doors at this elevation
-        const entranceEdges = [];
-        const existingDoors = scene.walls.filter(w => {
-            if (!w.door || w.door === 0) return false;
-            const doorBottom = w.flags?.["wall-height"]?.bottom ?? 0;
-            return Math.abs(doorBottom - elevation) < LEVEL_HEIGHT;
-        });
-
-        for (const door of existingDoors) {
-            const [x1, y1, x2, y2] = door.c;
-            const midX = (x1 + x2) / 2;
-            const midY = (y1 + y2) / 2;
-
-            const isHorizontal = Math.abs(y1 - y2) < tolerance;
-            const isVertical = Math.abs(x1 - x2) < tolerance;
-
-            if (isHorizontal) {
-                const gy = Math.round(midY / gridSize);
-                const gx = Math.floor(midX / gridSize);
-                entranceEdges.push({ x: gx, y: gy - 1, dir: 'S' });
-                entranceEdges.push({ x: gx, y: gy, dir: 'N' });
-            } else if (isVertical) {
-                const gx = Math.round(midX / gridSize);
-                const gy = Math.floor(midY / gridSize);
-                entranceEdges.push({ x: gx - 1, y: gy, dir: 'E' });
-                entranceEdges.push({ x: gx, y: gy, dir: 'W' });
-            }
-        }
-
-        const entranceSet = new Set(entranceEdges.map(e => `${e.x},${e.y},${e.dir}`));
-        // Use preferredLevelId as a hint when available, then fall back to elevation-based lookup
-        const levelContext = getSceneLevelContextForElevation(scene, elevation)
-            ?? getSceneLevelContext(scene, preferredLevelId);
-
-        // 6. Generate and create walls for this elevation
-        if (!noWalls) {
-            const wallsData = generateWallsWithElevation(floors, entranceSet, gridSize, WALL_THICKNESS, wallHeightBottom, wallHeightTop)
-                .map(w => applySceneLevelData(w, "Wall", levelContext));
-
-            // Generate filler walls for doors at this elevation
-            if (existingDoors.length > 0 && WALL_THICKNESS > 0) {
-                for (const door of existingDoors) {
-                    const [px1, py1, px2, py2] = door.c;
-
-                    if (Math.abs(py1 - py2) < tolerance) {
-                        const minX = Math.min(px1, px2);
-                        const maxX = Math.max(px1, px2);
-                        const y = py1;
-                        wallsData.push(applySceneLevelData({
-                            c: [minX - WALL_THICKNESS, y, minX, y],
-                            light: 20, move: 20, sound: 20,
-                            flags: { "wall-height": { bottom: wallHeightBottom, top: wallHeightTop } }
-                        }, "Wall", levelContext));
-                        wallsData.push(applySceneLevelData({
-                            c: [maxX, y, maxX + WALL_THICKNESS, y],
-                            light: 20, move: 20, sound: 20,
-                            flags: { "wall-height": { bottom: wallHeightBottom, top: wallHeightTop } }
-                        }, "Wall", levelContext));
-                    } else if (Math.abs(px1 - px2) < tolerance) {
-                        const minY = Math.min(py1, py2);
-                        const maxY = Math.max(py1, py2);
-                        const x = px1;
-                        wallsData.push(applySceneLevelData({
-                            c: [x, minY - WALL_THICKNESS, x, minY],
-                            light: 20, move: 20, sound: 20,
-                            flags: { "wall-height": { bottom: wallHeightBottom, top: wallHeightTop } }
-                        }, "Wall", levelContext));
-                        wallsData.push(applySceneLevelData({
-                            c: [x, maxY, x, maxY + WALL_THICKNESS],
-                            light: 20, move: 20, sound: 20,
-                            flags: { "wall-height": { bottom: wallHeightBottom, top: wallHeightTop } }
-                        }, "Wall", levelContext));
-                    }
-                }
-            }
-
-            // Create walls in batches, then update elevation to bypass Levels hooks
-            if (wallsData.length > 0) {
-                const chunkSize = 100;
-                for (let i = 0; i < wallsData.length; i += chunkSize) {
-                    const created = await scene.createEmbeddedDocuments("Wall", wallsData.slice(i, i + chunkSize));
-                    const updates = created.map(w => ({
-                        _id: w.id,
-                        "flags.wall-height.bottom": wallHeightBottom,
-                        "flags.wall-height.top": wallHeightTop
-                    }));
-                    if (updates.length > 0) {
-                        await scene.updateEmbeddedDocuments("Wall", updates);
-                    }
-                }
-            }
-        }
-
-        // 7. Generate wall visuals for this elevation
-        const drawingsData = generateWallVisualsWithElevation(floors, entranceSet, gridSize, WALL_THICKNESS, elevation, wallHeightTop)
-            .map(d => applySceneLevelData(d, "Drawing", levelContext));
-
-        if (drawingsData.length > 0) {
-            const chunkSize = 100;
-            for (let i = 0; i < drawingsData.length; i += chunkSize) {
-                const created = await scene.createEmbeddedDocuments("Drawing", drawingsData.slice(i, i + chunkSize));
-                const updates = created.map(d => ({
-                    _id: d.id,
-                    elevation: elevation,
-                    "flags.levels.rangeTop": wallHeightTop
-                }));
-                if (updates.length > 0) {
-                    await scene.updateEmbeddedDocuments("Drawing", updates);
-                }
-            }
-        }
-    }
-
-    // Restore original wall tile selection
-    _selectedWallTile = originalWallTile;
+    const levelContext = resolveLevelContext(scene, preferredLevelId);
+    await rebuildWallsForLevel(scene, levelContext, { wallTilePath, noWalls, logPrefix: "[Socket] " });
 }
 
