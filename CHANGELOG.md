@@ -4,6 +4,146 @@ All notable changes to this fork of `shadowdark-extras` are documented here.
 
 Format based loosely on [Keep a Changelog](https://keepachangelog.com/).
 
+## [6.10.15] — 2026-05-19 — Socket auth, formula eval, dungeon-painter v14 levels
+
+Three coordinated changes: a security pass on the socket layer and HTML
+rendering, a corrected formula evaluator, and a v14-native rewrite of
+DungeonPainter's level handling. All verified live on Foundry v14.361 +
+Shadowdark 4.0.4 with both GM and player clients connected.
+
+### Fixed — GM socket handlers now authorize callers
+
+All eight `module.socket` handlers that execute privileged work on the GM's
+client (`executeMacroAsGM`, `sdxExecuteItemMacro`,
+`executeSpellItemMacroAsGM`, `applyHolyWeaponAsGM`,
+`applyCleansingWeaponAsGM`, `applyWrathWeaponAsGM`,
+`applyWrathToAllWeaponsAsGM`, `sdxIdentifyItemAsGM`) now gate on the
+calling user's `OWNER` permission for the target document.
+
+Previously these handlers ran for any caller — a malicious or buggy
+client could invoke arbitrary macros, mutate other players' actors, or
+identify any item by sending crafted socket payloads. The gate:
+
+```js
+const sender = game.users.get(this.socketdata?.userId);
+if (!sender) return;
+if (!sender.isGM && !actor.testUserPermission(sender, "OWNER")) {
+  console.warn(`${MODULE_ID} | Unauthorized ... attempt from user ${sender.name}`);
+  return;
+}
+```
+
+Verified across the bridge: Player1 invoking `sdxExecuteItemMacro` with
+an item they do not own is rejected with the expected warning in the GM
+console; the same call against a Player1-owned item proceeds.
+
+Socket payloads now travel as UUIDs and the GM rehydrates via
+`fromUuid()`, so the auth check happens against the resolved document
+rather than caller-supplied IDs.
+
+### Fixed — formula evaluator no longer rewrites to Math.\*
+
+`Roll.safeEval` in v14 evaluates inside a `MATH_PROXY` sandbox that
+exposes bare math fn names (`floor`, `ceil`, `round`, `min`, `max`) but
+not the `Math` global. The previous remediation pass rewrote bare names
+to `Math.floor(...)` etc. before calling `safeEval`, which the sandbox
+rejected as "non-numeric result" — every spell formula like
+`(floor(@level/2)+1)d6` would throw.
+
+The `Math.*` rewrite has been removed; expressions pass through
+`Roll.safeEval` unchanged. Verified with `floor(7/2) → 3`,
+`max(1, floor(7/2)) → 3`, `floor(10/3) + ceil(10/4) → 6`.
+
+### Fixed — requirement evaluator reverted to `new Function`
+
+Source-requirement strings on Active Effects use logical and string
+operators (`charClass === "wizard"`, `path.includes("holy")`,
+`level >= 5 && ancestry === "elf"`) that `Roll.safeEval` cannot evaluate.
+The earlier `Roll.safeEval` swap is reverted; requirements run under a
+scoped `new Function(...keys, "return (" + req + ")")` evaluator with
+actor properties bound as local variables.
+
+### Fixed — XSS in HTML interpolations
+
+User-controlled `img.src`, `alt`, and document `name` values are now
+wrapped in `foundry.utils.escapeHTML(... ?? "")` everywhere they are
+interpolated into template strings:
+
+- identify chat card (`shadowdark-extras.mjs`)
+- NPC attack image rows
+- damage card target rows (`CombatSettingsSD.mjs`)
+- Tom arena player portraits + assets (`apps/TomPlayerView.mjs`)
+
+### Changed — `renderChatMessageHTML` replaces legacy hook + global monkeypatch
+
+The Shadowdark system's `removeTorchTimer` calls
+`html.querySelector(".light-source").remove()` without null-checking.
+The previous workaround monkeypatched `Element.prototype.querySelector`
+globally to return a dummy element — a footgun that could affect any
+selector on any DOM node. The new approach scopes the fix to chat
+rendering:
+
+```js
+Hooks.on("renderChatMessageHTML", (message, html, context) => {
+  if (!element.querySelector(".light-source")) {
+    const dummy = document.createElement("div");
+    dummy.className = "light-source sdx-dummy-light-source";
+    dummy.style.display = "none";
+    element.appendChild(dummy);
+  }
+});
+```
+
+`renderChatMessage` (legacy v13 hook) is replaced by
+`renderChatMessageHTML` (v14 hook) throughout.
+
+### Changed — Active Effect requirement enforcement off the data-prep hot path
+
+The async `prepareActorData` hook that evaluated source requirements and
+scheduled `effect.update` calls via `setTimeout` is gone. Requirements
+now run synchronously via `updateActor`, `renderActorSheet`, and
+`createItem` event hooks — no more sheet renders blocked by async work
+in the data preparation cycle.
+
+### Changed — context menu modernized for v14
+
+Scene context menu entries use `label` and `visible` (v14 properties)
+instead of `name` and `condition` (v13).
+
+### Refactored — DungeonPainter level handling
+
+`scripts/DungeonPainterSD.mjs` lost 345 net lines. Documents are now
+matched by `levels` membership rather than `elevation` tolerance, which
+fixes incorrect tile/wall identity on multi-floor scenes where two
+levels share grid coordinates with `elevation: 0`.
+
+- `documentMatchesLevel(doc, levelContext)` centralizes the membership
+  check; used by fill, delete, door placement, and wall rebuild.
+- `rebuildWallsForLevel(scene, levelContext, opts)` unifies the GM-local
+  and player-socket rebuild paths — no more divergence between
+  "rebuild from GM canvas action" and "rebuild from player paint event".
+- Dead v14 Scene fallbacks removed (`scene._view`, `scene.initialLevel`,
+  `scene.firstLevel` — none of these exist in v14.361).
+- `getSceneLevelContextForElevation` now uses range containment
+  (`bottom <= z <= top`) instead of exact `bottom === z`.
+- `applySceneLevelData` no longer clobbers caller-supplied elevation
+  values; only defaults to `0` when the caller omits it.
+- Probe-tile fill path removed; eliminated the risk of duplicate
+  first-cell tiles when a player painted while a probe was in flight.
+
+Verified live on a two-level test scene: painting overlapping grid
+coordinates on `defaultLevel0000` and an `Upper` level keeps each
+level's tiles, walls, and drawings independent. Deleting on one level
+leaves the other intact.
+
+### Repo hygiene
+
+`.gitignore` updated to exclude release artifacts (`module.zip`,
+`*.zip`), agent scratch (`.planning/`, `GEMINI.md`, `CLAUDE.md`,
+`AGENTS.md`), and the Foundry LevelDB lock sentinel
+(`packs/**/LOCK`). Local planning docs and per-agent config files no
+longer enter `git status`.
+
 ## [6.10.14] — 2026-05-18 — Module API security hardening
 
 Implements all of `SECURITY-PLAN-Module-API.md`. Five coordinated additions
