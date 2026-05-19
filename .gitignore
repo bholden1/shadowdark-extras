@@ -10,6 +10,8 @@ Thumbs.db
 .claude/
 .gemini/
 .planning/
+docs/claude/
+docs/gemini/
 Geminis-*.txt
 AGENTS.md
 GEMINI.md
