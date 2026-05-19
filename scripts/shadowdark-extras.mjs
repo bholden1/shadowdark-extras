@@ -18508,6 +18508,17 @@ globalThis.SDX = globalThis.SDX || {};
 
 SDX.templates = {
 	/**
+	 * Get the auto-generated Region companion for a MeasuredTemplate.
+	 * In Foundry v14, the auto-created Region shares the exact same document ID.
+	 * @param {MeasuredTemplateDocument} templateDoc 
+	 * @returns {RegionDocument|null}
+	 */
+	getPairedRegion(templateDoc) {
+		if (!templateDoc?.parent) return null;
+		return templateDoc.parent.regions.get(templateDoc.id) || null;
+	},
+
+	/**
 	 * Interactive template placement
 	 * @param {Object} options - Template options
 	 * @param {string} options.type - Template type: "rect", "circle", "cone", "ray"
@@ -18941,12 +18952,6 @@ SDX.templates = {
 				clearTokenHighlighting(); // Clear visual highlights on placement
 				cleanup();
 
-				// Snapshot existing region IDs before creation so we can identify
-				// the Region that Foundry auto-creates from the MeasuredTemplate.
-				const existingRegionIds = new Set(
-					[...(canvas.scene.regions ?? [])].map(r => r.id)
-				);
-
 				// Create the actual template document in the scene
 				const creationData = {
 					...templateData,
@@ -18960,16 +18965,23 @@ SDX.templates = {
 				const placedTemplate = created[0];
 
 				// v14: The MeasuredTemplate creation auto-produces a RegionDocument
-				// with a different ID. Find that new Region and set levels on it.
+				// with the EXACT SAME ID. Find that Region and set levels on it.
 				if (levels?.length) {
 					try {
-						const newRegion = [...(canvas.scene.regions ?? [])]
-							.find(r => !existingRegionIds.has(r.id));
+						// Wait for the region to exist (auto-creation can take a few ms)
+						let attempts = 0;
+						let newRegion = canvas.scene.regions?.get(placedTemplate.id);
+						while (!newRegion && attempts < 10) {
+							await new Promise(r => setTimeout(r, 50));
+							newRegion = canvas.scene.regions?.get(placedTemplate.id);
+							attempts++;
+						}
+
 						if (newRegion) {
 							await newRegion.update({ levels });
 							console.log(`shadowdark-extras | Set region.levels=${JSON.stringify(levels)} on ${newRegion.id}`);
 						} else {
-							console.warn("shadowdark-extras | Could not find auto-created Region to set levels");
+							console.warn(`shadowdark-extras | Could not find auto-created Region with ID ${placedTemplate.id} to set levels`);
 						}
 					} catch (e) {
 						console.warn("shadowdark-extras | Failed to set region.levels:", e);
@@ -19171,6 +19183,9 @@ Hooks.on("setup", () => {
 		}
 
 		module.api = {
+			// --- Templates ---
+			templates: SDX.templates,
+
 			// --- Spells / Focus tracker ---
 			startDurationSpell: audited("startDurationSpell", gmOnly("startDurationSpell", startDurationSpell)),
 			endDurationSpell: audited("endDurationSpell", gmOnly("endDurationSpell", endDurationSpell)),

@@ -1732,6 +1732,7 @@ export async function injectDamageCard(message, html, data) {
 	let spellDamageConfig = null;
 	let casterActor = null; // The actor who owns the spell item
 	let item = null; // The spell/potion item
+	let placedTemplateId = null; // Track locally-placed template ID
 
 	// Get the item from the chat card if it exists (SD 3.x DOM or SD 4.x rollConfig).
 	// Helper resolves both legacy `.chat-card` DOM data and v4 `flags.shadowdark.rollConfig`.
@@ -2262,7 +2263,7 @@ export async function injectDamageCard(message, html, data) {
 
 					// Store template ID for duration spell linking
 					if (result.template) {
-						window._lastPlacedTemplateId = result.template.id;
+						placedTemplateId = result.template.id;
 					}
 
 					// Mark this message as having template placed using in-memory tracking
@@ -2424,7 +2425,7 @@ export async function injectDamageCard(message, html, data) {
 								reapplyEffects: spellDamageConfig.reapplyEffects || false,
 								damageType: spellDamageConfig.damageType || "",
 								effects: spellDamageConfig.effects || [],
-								templateId: window._lastPlacedTemplateId || null
+								templateId: placedTemplateId || null
 							};
 
 							const instance = await startDurationSpell(casterActor, item, [], trackerConfig);
@@ -3678,11 +3679,11 @@ export async function injectDamageCard(message, html, data) {
 					reapplyEffects: spellDamageConfig.reapplyEffects || false,
 					damageType: spellDamageConfig.damageType || "",
 					effects: spellDamageConfig.effects || [],
-					templateId: window._lastPlacedTemplateId || null
+					templateId: placedTemplateId || null
 				};
 
 				// Clear the temp variable
-				window._lastPlacedTemplateId = null;
+				placedTemplateId = null;
 
 				await startDurationSpell(actor, item, targetTokenIds, durationConfig);
 

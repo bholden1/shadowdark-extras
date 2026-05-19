@@ -99,8 +99,6 @@ export function initTemplateEffects() {
         }
     };
     Hooks.on("deleteMeasuredTemplate", (doc) => _onDeleteTemplate(doc));
-    // v14: spell creates a Region, not just a MeasuredTemplate
-    Hooks.on("deleteRegion", (doc) => _onDeleteTemplate(doc));
 
     // Clear per-turn tracking and process turn-based effects when combat advances
     Hooks.on("updateCombat", async (combat, changes, options, userId) => {
@@ -1366,13 +1364,11 @@ function ensureTemplateShape(template) {
  * @returns {Token[]} Array of tokens inside the template
  */
 export function getTokensInTemplate(templateDoc) {
-    // In v14 a MeasuredTemplate auto-creates a Region with a different document ID.
+    // In v14 a MeasuredTemplate auto-creates a Region with the EXACT SAME document ID.
     // The Region carries the levels field; use it for the level check when available.
     let levelDoc = templateDoc;
     if (!(templateDoc.levels instanceof Set) && templateDoc.parent) {
-        const region = [...(templateDoc.parent.regions ?? [])]
-            .find(r => r.flags?.core?.MeasuredTemplate === true &&
-                       r.flags?.[MODULE_ID]?.templateEffects != null);
+        const region = templateDoc.parent.regions?.get(templateDoc.id);
         if (region) levelDoc = region;
     }
 
