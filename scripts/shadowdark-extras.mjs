@@ -132,21 +132,18 @@ Hooks.once("init", () => {
 	// Backport Shadowdark 4.0 fix: suppress AEs from stashed / unequipped / unidentified items
 	patchArmorActiveEffects();
 
-	// Monkeypatch: Fix system's removeTorchTimer error when chat messages don't have .light-source element
+	// Fix system's removeTorchTimer error when chat messages don't have .light-source element
 	// The system hook at hooks.mjs:168 calls html.querySelector(".light-source").remove() without null checking
-	// We patch Element.prototype.querySelector to return a safe dummy when called with ".light-source" on chat messages
-	const originalQuerySelector = Element.prototype.querySelector;
-	Element.prototype.querySelector = function (selector) {
-		const result = originalQuerySelector.call(this, selector);
-		// If looking for .light-source and it doesn't exist, check if this is a chat message
-		if (!result && selector === ".light-source" && this.classList?.contains("chat-message")) {
-			// Return a dummy element that can be safely removed
+	// Instead of a global monkeypatch, we inject a hidden dummy element during message rendering if it's missing.
+	Hooks.on("renderChatMessageHTML", (message, html, context) => {
+		const element = html instanceof HTMLElement ? html : html[0];
+		if (element && !element.querySelector(".light-source")) {
 			const dummy = document.createElement("div");
-			dummy.remove = () => { }; // No-op remove
-			return dummy;
+			dummy.className = "light-source sdx-dummy-light-source";
+			dummy.style.display = "none";
+			element.appendChild(dummy);
 		}
-		return result;
-	};
+	});
 
 	// Monkeypatch: Fix system's targeting.mjs error - game.user.updateTokenTargets doesn't exist in modern Foundry
 	// The system hook at targeting.mjs:11 calls game.user.updateTokenTargets([token.id]) which is deprecated/removed
@@ -16839,8 +16836,20 @@ Hooks.once("ready", async () => {
 
 
 		// Register the GM execution handler
-		macroExecuteSocket.register("executeMacroAsGM", async (macroId, contextData) => {
+		macroExecuteSocket.register("executeMacroAsGM", async function(macroId, contextData) {
 			// This runs on the GM's client
+			const sender = game.users.get(this.socketdata?.userId);
+			if (!sender) return;
+
+			// Reconstruct actor to check ownership
+			const actor = contextData.actorUuid ? await fromUuid(contextData.actorUuid) :
+						 (contextData.actorId ? game.actors.get(contextData.actorId) : null);
+
+			if (!sender.isGM && (!actor || !actor.testUserPermission(sender, "OWNER"))) {
+				console.warn(`${MODULE_ID} | Unauthorized macro execution attempt from user ${sender.name}`);
+				return;
+			}
+
 			const macro = game.macros.get(macroId);
 			if (!macro) {
 				console.warn(`${MODULE_ID} | Macro with ID "${macroId}" not found`);
@@ -16849,7 +16858,7 @@ Hooks.once("ready", async () => {
 
 			// Reconstruct the context from the serialized data
 			const context = {
-				actor: game.actors.get(contextData.actorId),
+				actor: actor,
 				token: contextData.tokenUuid ? (await fromUuid(contextData.tokenUuid))?.object : undefined,
 				trigger: contextData.trigger,
 				item: contextData.itemUuid ? await fromUuid(contextData.itemUuid) : undefined,
@@ -16860,10 +16869,24 @@ Hooks.once("ready", async () => {
 			await macro.execute(context);
 		});
 
-		macroExecuteSocket.register("sdxExecuteItemMacro", async (itemUuid, contextData) => {
+		macroExecuteSocket.register("sdxExecuteItemMacro", async function(itemUuid, contextData) {
+			const sender = game.users.get(this.socketdata?.userId);
+			if (!sender) return null;
+
 			const item = await fromUuid(itemUuid);
 			if (!item) return null;
-			return executeItemMacro(item, contextData);
+
+			if (!sender.isGM && !item.testUserPermission(sender, "OWNER")) {
+				console.warn(`${MODULE_ID} | Unauthorized item macro execution attempt from user ${sender.name}`);
+				return null;
+			}
+
+			// Rehydrate context if it was serialized
+			const context = { ...contextData };
+			if (contextData.actorUuid) context.actor = await fromUuid(contextData.actorUuid);
+			if (contextData.tokenUuid) context.token = (await fromUuid(contextData.tokenUuid))?.object;
+
+			return executeItemMacro(item, context);
 		});
 
 		// Register handler to sync template targets to GM
@@ -16945,11 +16968,11 @@ async function executeMacroFromEffect(actor, macroValue, currentTrigger, options
 		if (macroExecuteSocket && !game.user.isGM) {
 			// Serialize context data for socket transmission
 			const contextData = {
-				actorId: actor.id,
-				tokenId: token?.id,
+				actorUuid: actor.uuid,
+				tokenUuid: token?.document?.uuid,
 				trigger: currentTrigger,
-				itemId: options.item?.id,
-				effectId: options.effect?.id,
+				itemUuid: options.item?.uuid,
+				effectUuid: options.effect?.uuid,
 			};
 
 			// Execute macro as GM via socketlib
@@ -17135,7 +17158,18 @@ export async function executeItemMacro(item, context = {}) {
 	
 	if (runAsGM && !game.user.isGM) {
 		if (macroExecuteSocket) {
-			return macroExecuteSocket.executeAsGM("sdxExecuteItemMacro", item.uuid, context);
+			// Serialize context documents to UUIDs for socketlib transmission
+			const serializedContext = { ...context };
+			if (context.actor) {
+				serializedContext.actorUuid = context.actor.uuid;
+				delete serializedContext.actor;
+			}
+			if (context.token) {
+				serializedContext.tokenUuid = context.token.uuid || context.token.document?.uuid;
+				delete serializedContext.token;
+			}
+
+			return macroExecuteSocket.executeAsGM("sdxExecuteItemMacro", item.uuid, serializedContext);
 		} else {
 			ui.notifications.warn("Run as GM requested but socketlib not available.");
 		}
@@ -17352,9 +17386,18 @@ Hooks.once("ready", () => {
 	// Actually, hooks run sequentially. But macroExecuteSocket is let-scoped in the file, so it IS available.
 
 	if (game.modules.get("socketlib")?.active && macroExecuteSocket) {
-		macroExecuteSocket.register("executeSpellItemMacroAsGM", async (serializedContext) => {
+		macroExecuteSocket.register("executeSpellItemMacroAsGM", async function(serializedContext) {
+			const sender = game.users.get(this.socketdata?.userId);
+			if (!sender) return;
+
 			const actor = game.actors.get(serializedContext.actorId);
 			if (!actor) return;
+
+			// Verify authorization
+			if (!sender.isGM && !actor.testUserPermission(sender, "OWNER")) {
+				console.warn(`${MODULE_ID} | Unauthorized spell macro execution attempt from user ${sender.name}`);
+				return;
+			}
 
 			const spellItem = actor.items.get(serializedContext.itemId);
 			if (!spellItem) return;
@@ -17386,10 +17429,20 @@ Hooks.once("ready", () => {
 			return executeSpellItemMacro(spellItem, actor, serializedContext.trigger, context);
 		});
 
-		macroExecuteSocket.register("applyHolyWeaponAsGM", async (weaponUuid, casterUuid, itemUuid, targetActorUuid, targetTokenUuid) => {
+		macroExecuteSocket.register("applyHolyWeaponAsGM", async function(weaponUuid, casterUuid, itemUuid, targetActorUuid, targetTokenUuid) {
+			const sender = game.users.get(this.socketdata?.userId);
+			if (!sender) return;
+
 			// Items return the document directly from fromUuid, not a wrapper
 			const weapon = await fromUuid(weaponUuid);
 			const casterActor = await fromUuid(casterUuid);
+
+			// Verify authorization
+			if (!sender.isGM && (!casterActor || !casterActor.testUserPermission(sender, "OWNER"))) {
+				console.warn(`${MODULE_ID} | Unauthorized applyHolyWeaponAsGM attempt from user ${sender.name}`);
+				return;
+			}
+
 			const casterItem = await fromUuid(itemUuid);
 			const targetActor = await fromUuid(targetActorUuid);
 			const targetTokenDoc = targetTokenUuid ? await fromUuid(targetTokenUuid) : null;
@@ -17403,10 +17456,20 @@ Hooks.once("ready", () => {
 			}
 		});
 
-		macroExecuteSocket.register("applyCleansingWeaponAsGM", async (weaponUuid, casterUuid, itemUuid, targetActorUuid, targetTokenUuid) => {
+		macroExecuteSocket.register("applyCleansingWeaponAsGM", async function(weaponUuid, casterUuid, itemUuid, targetActorUuid, targetTokenUuid) {
+			const sender = game.users.get(this.socketdata?.userId);
+			if (!sender) return;
+
 			// Items return the document directly from fromUuid, not a wrapper
 			const weapon = await fromUuid(weaponUuid);
 			const casterActor = await fromUuid(casterUuid);
+
+			// Verify authorization
+			if (!sender.isGM && (!casterActor || !casterActor.testUserPermission(sender, "OWNER"))) {
+				console.warn(`${MODULE_ID} | Unauthorized applyCleansingWeaponAsGM attempt from user ${sender.name}`);
+				return;
+			}
+
 			const casterItem = await fromUuid(itemUuid);
 			const targetActor = await fromUuid(targetActorUuid);
 			const targetTokenDoc = targetTokenUuid ? await fromUuid(targetTokenUuid) : null;
@@ -17421,9 +17484,19 @@ Hooks.once("ready", () => {
 		});
 
 
-		macroExecuteSocket.register("applyWrathWeaponAsGM", async (weaponUuid, casterUuid, itemUuid, targetActorUuid, targetTokenUuid) => {
+		macroExecuteSocket.register("applyWrathWeaponAsGM", async function(weaponUuid, casterUuid, itemUuid, targetActorUuid, targetTokenUuid) {
+			const sender = game.users.get(this.socketdata?.userId);
+			if (!sender) return;
+
 			const weapon = await fromUuid(weaponUuid);
 			const casterActor = await fromUuid(casterUuid);
+
+			// Verify authorization
+			if (!sender.isGM && (!casterActor || !casterActor.testUserPermission(sender, "OWNER"))) {
+				console.warn(`${MODULE_ID} | Unauthorized applyWrathWeaponAsGM attempt from user ${sender.name}`);
+				return;
+			}
+
 			const casterItem = await fromUuid(itemUuid);
 			const targetActor = await fromUuid(targetActorUuid);
 			const targetTokenDoc = targetTokenUuid ? await fromUuid(targetTokenUuid) : null;
@@ -17437,8 +17510,18 @@ Hooks.once("ready", () => {
 			}
 		});
 
-		macroExecuteSocket.register("applyWrathToAllWeaponsAsGM", async (casterUuid, itemUuid, isCritical) => {
+		macroExecuteSocket.register("applyWrathToAllWeaponsAsGM", async function(casterUuid, itemUuid, isCritical) {
+			const sender = game.users.get(this.socketdata?.userId);
+			if (!sender) return;
+
 			const casterActor = await fromUuid(casterUuid);
+
+			// Verify authorization
+			if (!sender.isGM && (!casterActor || !casterActor.testUserPermission(sender, "OWNER"))) {
+				console.warn(`${MODULE_ID} | Unauthorized applyWrathToAllWeaponsAsGM attempt from user ${sender.name}`);
+				return;
+			}
+
 			const casterItem = await fromUuid(itemUuid);
 
 			if (casterActor && casterItem) {
@@ -17451,19 +17534,29 @@ Hooks.once("ready", () => {
 
 		// Handler: GM identifies item via SD 4.x native toggleIdentified(),
 		// then routes the reveal dialog back to the originating player.
-		macroExecuteSocket.register("sdxIdentifyItemAsGM", async ({ itemUuid, maskedName, originatingUserId }) => {
+		macroExecuteSocket.register("sdxIdentifyItemAsGM", async function({ itemUuid, maskedName, originatingUserId }) {
+			const sender = game.users.get(this.socketdata?.userId);
+			if (!sender) return;
+
 			const item = await fromUuid(itemUuid);
 			if (!item) return;
 
+			// Verify authorization - sender must own the item (or its parent actor)
+			if (!sender.isGM && !item.testUserPermission(sender, "OWNER")) {
+				console.warn(`${MODULE_ID} | Unauthorized sdxIdentifyItemAsGM attempt from user ${sender.name}`);
+				return;
+			}
+
 			// SD 4.x native: swaps name ↔ identification.name, flips identified flag
 			await item.system.toggleIdentified();
+			const escapedItemImg = foundry.utils.escapeHTML(item.img ?? "");
 
 			// Post chat message visible to all
 			await ChatMessage.create({
 				content: `
 					<div class="shadowdark chat-card sdx-identify-chat">
 						<header class="card-header flexrow">
-							<img class="item-image" src="${item.img}" alt="${item.name}"/>
+							<img class="item-image" src="${escapedItemImg}" alt="${foundry.utils.escapeHTML(item.name)}"/>
 							<div class="header-text">
 								<h3><i class="fas fa-sparkles"></i> ${game.i18n.localize("SHADOWDARK_EXTRAS.identify.revealed")}</h3>
 							</div>
@@ -17932,14 +18025,16 @@ async function processNPCFeatureDamage(item, actor, token, targetToken, targetAc
 	const flavor = isHealing
 		? `${item.name} heals for`
 		: `${item.name} deals${damageType ? " " + damageType : ""} damage`;
+	const escapedItemImg = foundry.utils.escapeHTML(item.img ?? "");
+	const escapedItemName = foundry.utils.escapeHTML(item.name);
 
 	// Create chat card HTML with the required data attributes for injectDamageCard
 	const rollHtml = await roll.render();
 	const content = `
 		<div class="shadowdark chat-card item-card" data-actor-id="${actor.id}" data-item-id="${item.id}">
 			<header class="card-header flexrow">
-				<img src="${item.img}" data-tooltip="${item.name}"/>
-				<h3 class="item-name">${item.name}</h3>
+				<img src="${escapedItemImg}" data-tooltip="${escapedItemName}"/>
+				<h3 class="item-name">${escapedItemName}</h3>
 			</header>
 			<div class="card-content">
 				<h4 class="damage-roll-header">${flavor}</h4>
@@ -19544,7 +19639,8 @@ async function evaluateSourceRequirement(requirement, actor, token = null, sourc
 		//console.log(`${MODULE_ID} | Actor: ${actor.name} (Level ${context.level})`);
 		//console.log(`${MODULE_ID} | Resolved names - ancestry: "${context.ancestry}", class: "${context.charClass}", background: "${context.background}", alignment: "${context.alignment}"`);
 
-		// Use Function constructor for safer evaluation than eval
+		// Requirements support string comparisons and actor/token property access.
+		// Roll.safeEval is numeric-only, so keep the existing scoped expression evaluator.
 		const fn = new Function(...Object.keys(context), `return ${requirement};`);
 		const result = fn(...Object.values(context));
 
@@ -20021,54 +20117,9 @@ Hooks.on("createActiveEffect", async (effect, options, userId) => {
 /**
  * Hook to check requirements when actor is prepared
  */
-Hooks.on("prepareActorData", async (actor) => {
-	// Check requirements synchronously by just checking the disabled state
-	const effectsWithRequirements = actor.effects.filter(e =>
-		e.getFlag(MODULE_ID, "sourceRequirement") || e.getFlag(MODULE_ID, "requireEquipped")
-	);
+// Source requirements are now handled via updateActor, createItem, and renderActorSheet hooks
+// for better performance and to avoid async updates during data preparation.
 
-	if (effectsWithRequirements.length === 0) return;
-
-	//console.log(`${MODULE_ID} | prepareActorData hook - Actor: ${actor.name}, Effects with requirements or requireEquipped: ${effectsWithRequirements.length}`);
-
-	const token = actor.token?.object || actor.getActiveTokens()[0];
-
-	for (const effect of effectsWithRequirements) {
-		const requirement = effect.getFlag(MODULE_ID, "sourceRequirement");
-		const requirementMet = await evaluateSourceRequirement(requirement, actor, token, effect);
-
-		// If requirement not met and effect is not disabled, we need to update it
-		// But we can't do async updates here, so we'll just log it
-		// Check for manual override
-		const manualOverride = effect.getFlag(MODULE_ID, "manualOverride");
-		if (manualOverride !== undefined && manualOverride !== null) {
-			//console.log(`${MODULE_ID} | [prepareActorData] Effect "${effect.name}" has manual override, skipping`);
-			continue;
-		}
-
-		if (!requirementMet && !effect.disabled) {
-			//console.log(`${MODULE_ID} | [prepareActorData] Effect "${effect.name}" should be disabled - requirement not met: ${requirement}`);
-			// Queue an update for next tick
-			setTimeout(() => {
-				if (!effect.disabled) {
-					//console.log(`${MODULE_ID} | [setTimeout] DISABLING effect "${effect.name}"`);
-					effect.update({ disabled: true }, { byRequirementSystem: true });
-				}
-			}, 0);
-		} else if (requirementMet && effect.disabled) {
-			//console.log(`${MODULE_ID} | [prepareActorData] Effect "${effect.name}" should be enabled - requirement met: ${requirement}`);
-			// Queue an update for next tick
-			setTimeout(() => {
-				if (effect.disabled) {
-					//console.log(`${MODULE_ID} | [setTimeout] ENABLING effect "${effect.name}"`);
-					effect.update({ disabled: false }, { byRequirementSystem: true });
-				}
-			}, 0);
-		} else {
-			//console.log(`${MODULE_ID} | [prepareActorData] Effect "${effect.name}" already in correct state (disabled: ${effect.disabled}, req met: ${requirementMet})`);
-		}
-	}
-});
 
 /**
  * Hook to update effects when actor data changes (e.g., level up)
@@ -20240,7 +20291,9 @@ Hooks.once('ready', () => {
 		// Add item image if available and not the default
 		const defaultIcon = "icons/svg/sword.svg";
 		if (item.img && item.img !== defaultIcon) {
-			const imgHtml = `<img src="${item.img}" alt="${item.name}" class="sdx-npc-item-img" style="width: 18px; height: 18px; vertical-align: text-bottom; margin-right: 2px; border: none; border-radius: 2px;" />`;
+			const escapedName = foundry.utils.escapeHTML(item.name);
+			const escapedImg = foundry.utils.escapeHTML(item.img);
+			const imgHtml = `<img src="${escapedImg}" alt="${escapedName}" class="sdx-npc-item-img" style="width: 18px; height: 18px; vertical-align: text-bottom; margin-right: 2px; border: none; border-radius: 2px;" />`;
 			// Insert image inside the anchor, right after the icon <i> tag
 			return baseHtml.replace(/<i class="fas fa-dice-d20"><\/i>/, `<i class="fas fa-dice-d20"></i>${imgHtml}`);
 		}
@@ -20266,7 +20319,9 @@ Hooks.once('ready', () => {
 			// Add item image if available and not the default
 			const defaultIcon = "icons/svg/explosion.svg";
 			if (item.img && item.img !== defaultIcon) {
-				const imgHtml = `<img src="${item.img}" alt="${item.name}" class="sdx-npc-item-img" style="width: 18px; height: 18px; vertical-align: text-bottom; margin-right: 2px; border: none; border-radius: 2px;" />`;
+				const escapedName = foundry.utils.escapeHTML(item.name);
+				const escapedImg = foundry.utils.escapeHTML(item.img);
+				const imgHtml = `<img src="${escapedImg}" alt="${escapedName}" class="sdx-npc-item-img" style="width: 18px; height: 18px; vertical-align: text-bottom; margin-right: 2px; border: none; border-radius: 2px;" />`;
 				// Insert image inside the anchor, right after the icon <i> tag (could be dice-d20 or comment)
 				return baseHtml.replace(/<i class="fas (fa-dice-d20|fa-comment)"><\/i>/, `<i class="fas $1"></i>${imgHtml}`);
 			}
@@ -20307,7 +20362,9 @@ Hooks.on("renderNpcSheetSD", (app, html, data) => {
 			// Find the anchor element and insert image after the icon
 			const anchor = $el.find('a.rollable');
 			if (anchor.length && !anchor.find('.sdx-npc-item-img').length) {
-				const imgHtml = `<img src="${item.img}" alt="${item.name}" class="sdx-npc-item-img" style="width: 18px; height: 18px; vertical-align: text-bottom; margin-right: 2px; border: none; border-radius: 2px;" />`;
+				const escapedImg = foundry.utils.escapeHTML(item.img);
+				const escapedName = foundry.utils.escapeHTML(item.name);
+				const imgHtml = `<img src="${escapedImg}" alt="${escapedName}" class="sdx-npc-item-img" style="width: 18px; height: 18px; vertical-align: text-bottom; margin-right: 2px; border: none; border-radius: 2px;" />`;
 				anchor.find('i.fas').after(imgHtml);
 			}
 		}
@@ -20323,9 +20380,9 @@ Hooks.on("renderNpcSheetSD", (app, html, data) => {
  */
 Hooks.on("getSceneContextOptions", (document, menuItems) => {
 	menuItems.push({
-		name: "Export Scene as ZIP",
+		label: "Export Scene as ZIP",
 		icon: '<i class="fas fa-file-archive"></i>',
-		condition: () => game.user.isGM,
+		visible: () => game.user.isGM,
 		callback: async (li) => {
 			// In Foundry v13, li is an HTMLElement, not jQuery
 			const element = li instanceof HTMLElement ? li : li[0];
@@ -20348,9 +20405,9 @@ Hooks.on("getSceneContextOptions", (document, menuItems) => {
 	});
 
 	menuItems.push({
-		name: "Import Scene from ZIP",
+		label: "Import Scene from ZIP",
 		icon: '<i class="fas fa-file-import"></i>',
-		condition: () => game.user.isGM,
+		visible: () => game.user.isGM,
 		callback: async () => {
 			await SceneImporter.promptImport();
 		}

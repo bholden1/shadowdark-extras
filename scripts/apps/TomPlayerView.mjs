@@ -1118,9 +1118,11 @@ export class TomPlayerView extends HandlebarsApplicationMixin(ApplicationV2) {
     // Sheet button - only shown if user owns the actor
     const sheetBtnHtml = isOwner ? `<button class="tom-arena-token-sheet-btn" title="Open Character Sheet"><i class="fas fa-user"></i></button>` : '';
 
+    const escapedName = foundry.utils.escapeHTML(actorName);
+    const escapedImage = foundry.utils.escapeHTML(image);
     tokenEl.innerHTML = `
       <div class="tom-arena-token-portrait">
-        <img src="${image}" alt="${actorName}">
+        <img src="${escapedImage}" alt="${escapedName}">
         <div class="tom-arena-conditions">${conditionsHtml}</div>
         ${gmConditionsBtn}
         <button class="tom-arena-token-toggle-btn" title="Toggle compact view"><i class="fas ${isCompact ? 'fa-compress' : 'fa-expand'}"></i></button>
@@ -1128,7 +1130,7 @@ export class TomPlayerView extends HandlebarsApplicationMixin(ApplicationV2) {
       </div>
       <div class="tom-arena-token-info">
         ${acBadge}
-        <div class="tom-arena-token-name">${actorName}</div>
+        <div class="tom-arena-token-name">${escapedName}</div>
         ${hpBadge}
       </div>
     `;
@@ -1514,7 +1516,8 @@ export class TomPlayerView extends HandlebarsApplicationMixin(ApplicationV2) {
     assetEl.style.left = `${x}%`;
     assetEl.style.top = `${y}%`;
     assetEl.style.transform = `translate(-50%, -50%) scale(${scale || 1})`;
-    assetEl.innerHTML = `<img src="${image}" alt="Asset">`;
+    const escapedImage = foundry.utils.escapeHTML(image);
+    assetEl.innerHTML = `<img src="${escapedImage}" alt="Asset">`;
 
     assetsContainer.appendChild(assetEl);
 

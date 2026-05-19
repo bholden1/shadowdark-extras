@@ -50,14 +50,9 @@ function evaluateFormulaExpressions(formula, rollData) {
 	// Pattern: (expression)d followed by a number
 	evaluated = evaluated.replace(/\(([^)]+)\)\s*d\s*(\d+)/gi, (match, expr, dieSize) => {
 		try {
-			// Replace math functions and evaluate
-			const safeExpr = expr
-				.replace(/floor/gi, 'Math.floor')
-				.replace(/ceil/gi, 'Math.ceil')
-				.replace(/round/gi, 'Math.round')
-				.replace(/min/gi, 'Math.min')
-				.replace(/max/gi, 'Math.max');
-			const numDice = Math.max(1, Math.floor(eval(safeExpr))); // At least 1 die
+			// Roll.safeEval's sandbox exposes bare math fns (floor/ceil/round/min/max)
+			// via MATH_PROXY; do NOT rewrite to Math.* — that breaks safeEval.
+			const numDice = Math.max(1, Math.floor(Roll.safeEval(expr))); // At least 1 die
 			return `${numDice}d${dieSize}`;
 		} catch (e) {
 			console.warn("shadowdark-extras | Could not evaluate expression:", expr, e);
@@ -68,7 +63,8 @@ function evaluateFormulaExpressions(formula, rollData) {
 	// Clean up any remaining standalone floor/ceil expressions not attached to dice
 	evaluated = evaluated.replace(/(\d+)\s*\+\s*floor\s*\(\s*([^)]+)\s*\)/gi, (match, base, expr) => {
 		try {
-			const result = parseInt(base) + Math.floor(eval(expr));
+			// Pass bare floor() through — Roll.safeEval handles it natively.
+			const result = parseInt(base) + Math.floor(Roll.safeEval(expr));
 			return result.toString();
 		} catch (e) {
 			return match;
@@ -227,8 +223,7 @@ function evaluateRequirement(formula, rollData) {
 			return `${op} "${word}"${rest}`;
 		});
 
-		// Now evaluate the formula as a JavaScript expression
-		// Use Function constructor for safer evaluation than eval
+		// Requirement expressions support strings and boolean logic, which Roll.safeEval does not.
 		const func = new Function('return (' + evalFormula + ')');
 		const result = func();
 
@@ -4159,12 +4154,14 @@ async function buildDamageCardHtml(actor, targets, totalDamage, damageType, allE
 							<input type="checkbox" class="sdx-target-enable-checkbox" data-token-id="${target.id}" checked title="Enable/disable this target" />
 								` : '';
 
+				const escapedTargetName = foundry.utils.escapeHTML(targetActor.name);
+				const escapedTargetImg = foundry.utils.escapeHTML(targetActor.img ?? "");
 				targetsHtml += `
 								<div class="sdx-target-item" data-token-id="${target.id}" data-actor-id="${targetActor.id}" data-enabled="true">
 									${enableCheckbox}
 						<div class="sdx-target-header">
-							<img src="${targetActor.img}" alt="${targetActor.name}" class="sdx-target-img" />
-							<div class="sdx-target-name">${targetActor.name}</div>
+							<img src="${escapedTargetImg}" alt="${escapedTargetName}" class="sdx-target-img" />
+							<div class="sdx-target-name">${escapedTargetName}</div>
 							${damagePreviewHtml}
 						</div>
 						${cardSettings.showMultipliers && totalDamage > 0 ? buildMultipliersHtml(cardSettings.damageMultipliers, target.id) : ''}
@@ -4378,8 +4375,8 @@ function rebuildTargetsList($card, messageId, baseDamage) {
 
 		const tokenId = target.id;
 		const actorId = actor.id;
-		const name = actor.name;
-		const img = actor.img || "icons/svg/mystery-man.svg";
+		const name = foundry.utils.escapeHTML(actor.name);
+		const img = foundry.utils.escapeHTML(actor.img || "icons/svg/mystery-man.svg");
 
 		// Add enable/disable checkbox if auto-apply is disabled
 		const enableCheckbox = !cardSettings.autoApplyDamage ? `
