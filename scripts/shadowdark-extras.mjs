@@ -47,7 +47,7 @@ import { registerDisplayNpcEnricher } from "./DisplayNpc.mjs";
 import { registerDisplayTableEnricher } from "./DisplayTable.mjs";
 import { registerDisplayItemEnricher } from "./DisplayItem.mjs";
 import { initEasyReferenceMenu, registerEasyReferenceSettings } from "./easy-reference/EasyReferenceMenu.mjs";
-import { CreatureTypesApp, getCreatureTypes } from "./CreatureTypesApp.mjs";
+import { CreatureTypesApp, getCreatureTypes, getEffectiveCreatureType } from "./CreatureTypesApp.mjs";
 import SheetEditorConfig from "./SheetEditorConfig.mjs";
 import PotionSheetSD from "./PotionSheetSD.mjs";
 import BackgroundSheetSD from "./BackgroundSheetSD.mjs";
@@ -7589,17 +7589,19 @@ function injectNpcCreatureType(app, html, actor) {
 		return;
 	}
 
-	// Only for GM
-	if (!game.user?.isGM) return;
+	// GM can edit; players see the value read-only
+	const isGM = game.user?.isGM === true;
 
 	// Handle both plain DOM element and jQuery object (for V13 compatibility)
 	const $html = html instanceof HTMLElement ? $(html) : html;
-	const currentType = actor.getFlag(MODULE_ID, "creatureType") || "";
+	const currentType = getEffectiveCreatureType(actor);
 
 	//console.log(`${MODULE_ID} | Current creature type: "${currentType}"`);
 
 	// Build the options HTML using dynamic creature types
-	const creatureTypes = getCreatureTypes();
+	const creatureTypes = [...getCreatureTypes()];
+	// Ensure the effective value is always selectable, even if not in the configured list
+	if (currentType && !creatureTypes.includes(currentType)) creatureTypes.push(currentType);
 	const optionsHtml = creatureTypes.map(type => {
 		const selected = type === currentType ? "selected" : "";
 		const label = type || game.i18n.localize("SHADOWDARK_EXTRAS.npc.creature_type.none");
@@ -7613,7 +7615,7 @@ function injectNpcCreatureType(app, html, actor) {
 				<label>${game.i18n.localize("SHADOWDARK_EXTRAS.npc.creature_type.label")}</label>
 			</div>
 			<div class="content">
-				<select class="sdx-creature-type-select" name="flags.${MODULE_ID}.creatureType">
+				<select class="sdx-creature-type-select" name="flags.${MODULE_ID}.creatureType" ${isGM ? "" : "disabled"}>
 					${optionsHtml}
 				</select>
 			</div>
@@ -7632,8 +7634,8 @@ function injectNpcCreatureType(app, html, actor) {
 		$attacksBox.before(creatureTypeHtml);
 		//console.log(`${MODULE_ID} | Injected creature type box`);
 
-		// Attach change handler
-		$html.find('.sdx-creature-type-select').on('change', async function (e) {
+		// Attach change handler (GM only; players see it read-only)
+		if (isGM) $html.find('.sdx-creature-type-select').on('change', async function (e) {
 			const newType = $(this).val();
 			//console.log(`${MODULE_ID} | Changing creature type to: ${newType}`);
 			await actor.setFlag(MODULE_ID, "creatureType", newType);

@@ -8,6 +8,7 @@ import { startDurationSpell, linkEffectToDurationSpell, linkEffectToFocusSpell, 
 import { setupTemplateEffectFlags, buildTemplateEffectsFlag, applyTemplateEffect, getTokensInTemplate } from "./TemplateEffectsSD.mjs";
 import { createAuraOnActor } from "./AuraEffectsSD.mjs";
 import { readSdRollOutcome, readSdDamageRoll, resolveCardContext } from "./sd4Compat.mjs";
+import { getEffectiveCreatureType } from "./CreatureTypesApp.mjs";
 
 const MODULE_ID = "shadowdark-extras";
 let socketlibSocket = null;
@@ -271,7 +272,7 @@ function buildTargetRollData(targetActor) {
 
 	// Add Ancestry and Subtype
 	target.ancestry = targetActor.system?.ancestry?.name || targetActor.system?.details?.ancestry || "";
-	target.subtype = targetActor.getFlag(MODULE_ID, "creatureType") || "";
+	target.subtype = getEffectiveCreatureType(targetActor) || "";
 	target.creatureType = target.subtype; // Alias for convenience
 
 	return target;

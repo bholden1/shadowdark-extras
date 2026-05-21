@@ -8,6 +8,8 @@
  * - Effect/condition application on hit with chance percentage
  */
 
+import { getEffectiveCreatureType } from "./CreatureTypesApp.mjs";
+
 const MODULE_ID = "shadowdark-extras";
 
 /**
@@ -1631,7 +1633,7 @@ function evaluateSingleRequirement(req, attacker, target) {
 			break;
 
 		case "targetSubtype":
-			testValue = target?.getFlag(MODULE_ID, "creatureType") || "";
+			testValue = getEffectiveCreatureType(target) || "";
 			break;
 
 		default:
