@@ -27,7 +27,7 @@ system:
     disadvantage: con
 effects:
   - name: SHADOWDARK.item.effect.predefined_effect.abilityDisadvantageCon
-    img: icons/magic/life/heart-black-red.webp
+    img: icons/magic/life/heart-area-circle-red-green.webp
     disabled: false
     transfer: true
     type: base

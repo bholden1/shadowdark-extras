@@ -1,5 +1,5 @@
 name: 'Absorption: Poison (value -1 = heal from damage, value 1 = double damage)'
-img: icons/consumables/potions/potion-bottle-corked-teal.webp
+img: icons/consumables/potions/potion-bottle-corked-blue.webp
 transfer: false
 system:
   changes:

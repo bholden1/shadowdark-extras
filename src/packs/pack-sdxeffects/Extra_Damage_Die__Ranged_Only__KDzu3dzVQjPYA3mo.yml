@@ -1,5 +1,5 @@
 name: Extra Damage Die (Ranged Only)
-img: icons/skills/ranged/arrow-strike-glowing-red.webp
+img: icons/skills/ranged/arrow-strike-glowing-teal.webp
 transfer: false
 type: base
 disabled: false
