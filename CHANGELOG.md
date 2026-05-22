@@ -4,6 +4,17 @@ All notable changes to this fork of `shadowdark-extras` are documented here.
 
 Format based loosely on [Keep a Changelog](https://keepachangelog.com/).
 
+## [6.10.19] — 2026-05-21 — Hotfix: include `data/` in the release package
+
+### Fixed
+
+- **6.10.18 failed to load entirely on fresh installs.** The release zip (and
+  the CI release workflow) did not include the `data/` directory, so
+  `data/creature-type-map.mjs` — imported by the creature-type feature shipped
+  in 6.10.18 — was missing from installs. The failed import cascaded through the
+  main module and prevented Shadowdark Extras from loading at all. The release
+  package and `.github/workflows/main.yml` now include `data/`.
+
 ## [6.10.18] — 2026-05-21 — Multi-level dungeon generator, creature-type mapping, icon fixes
 
 Headline feature: the dungeon generator can now build **multi-level
