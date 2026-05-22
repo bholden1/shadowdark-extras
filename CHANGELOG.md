@@ -4,6 +4,50 @@ All notable changes to this fork of `shadowdark-extras` are documented here.
 
 Format based loosely on [Keep a Changelog](https://keepachangelog.com/).
 
+## [6.10.18] — 2026-05-21 — Multi-level dungeon generator, creature-type mapping, icon fixes
+
+Headline feature: the dungeon generator can now build **multi-level
+dungeons** on a single scene, with stairs aligned across floors and joined
+by native Foundry v14 `changeLevel` regions. This release also adds runtime
+NPC creature-type mapping and fixes several references to core icons removed
+in v14.
+
+### Added — Multi-level dungeon generator
+
+The Generator tray panel gains a **Multi-Level** section. Set **Levels**
+(2–8) to stack that many floors on one scene, connected by native
+`changeLevel` regions so a token taking a stair changes floor while keeping
+the same map position.
+
+- **Aligned stairs** — up/down connectors sit at the same x/y on adjacent
+  floors, and are always placed inside rooms (never in a doorway or a 1-wide
+  corridor).
+- **Per-level variation** — upper floors trend toward grand, open halls and
+  deeper floors toward tighter, maze-like crypts (**Variation** slider; 0 =
+  uniform).
+- **Connector variety** — staircases, spiral stairs, ladders, and shafts,
+  plus occasional one-way drops and non-adjacent "chutes" that skip a floor.
+  Every level always keeps at least one two-way connection, so a floor can
+  never become a one-way trap (**Variety** slider; 0 = plain staircases).
+- **Links/Floor** controls how many connections join each adjacent pair of
+  floors.
+- The Levels / Links / Variation / Variety slider values persist between
+  sessions.
+
+### Added — Runtime NPC creature-type mapping
+
+NPC creature types are now derived at runtime from a bundled Shadowdark
+Tools bestiary (279 monsters → 20 native types), with a per-actor override
+flag and an "Apply to World Actors" bake button in the Creature Types app.
+Exposed for other modules via
+`game.modules.get("shadowdark-extras").api.getCreatureType(actor)` and
+`getMappedCreatureType(name)`.
+
+### Fixed
+
+- Replaced 11 ActiveEffect/item icon references that pointed at core icons
+  removed in Foundry v14.361, eliminating compendium-load 404s.
+
 ## [6.10.17] — 2026-05-20 — Dungeondraft decor packs and Hexplorer marker polish
 
 This release expands the Decor tray into a fuller custom-art workflow:
