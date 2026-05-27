@@ -258,7 +258,27 @@ export class MedkitApp extends HandlebarsApplicationMixin(ApplicationV2) {
             if (foundry.utils.isEmpty(data.flags)) delete data.flags;
         }
 
+        // Schema-default normalization: treat undefined / null / "" / [] / {}
+        // as equivalent to "absent" so items packed under an older system
+        // version don't show "Update Available" forever just because a new
+        // schema field (e.g. system.formula added in SD 4.x) defaults to ""
+        // on the actor copy but is missing from the compendium source.
+        this._stripEmpty(data);
+
         return data;
+    }
+
+    _stripEmpty(obj) {
+        if (obj == null || typeof obj !== "object" || Array.isArray(obj)) return;
+        for (const k of Object.keys(obj)) {
+            const v = obj[k];
+            if (v === undefined || v === null || v === "") { delete obj[k]; continue; }
+            if (Array.isArray(v) && v.length === 0) { delete obj[k]; continue; }
+            if (typeof v === "object" && !Array.isArray(v)) {
+                this._stripEmpty(v);
+                if (Object.keys(v).length === 0) delete obj[k];
+            }
+        }
     }
 
     /* -------------------------------------------- */
