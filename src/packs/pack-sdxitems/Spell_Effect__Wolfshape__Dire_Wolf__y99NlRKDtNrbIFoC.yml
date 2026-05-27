@@ -13,19 +13,19 @@ effects:
     statuses: []
     system:
       changes:
-        - key: system.abilities.str.base
+        - key: system.abilities.str.value
           priority: null
           value: 16
           type: upgrade
-        - key: system.abilities.dex.base
+        - key: system.abilities.dex.value
           priority: null
           value: 14
           type: upgrade
-        - key: system.abilities.con.base
+        - key: system.abilities.con.value
           priority: null
           value: 12
           type: upgrade
-        - key: system.attributes.hp.base
+        - key: system.attributes.hp.max
           priority: null
           value: 19
           type: upgrade
@@ -33,19 +33,19 @@ effects:
           priority: null
           value: 12
           type: override
-        - key: system.abilities.str.base
+        - key: system.abilities.str.value
           priority: null
           value: 16
           type: downgrade
-        - key: system.abilities.dex.base
+        - key: system.abilities.dex.value
           priority: null
           value: 14
           type: downgrade
-        - key: system.abilities.con.base
+        - key: system.abilities.con.value
           priority: null
           value: 12
           type: downgrade
-        - key: system.attributes.hp.base
+        - key: system.attributes.hp.max
           priority: null
           value: 19
           type: downgrade

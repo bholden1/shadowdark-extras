@@ -260,8 +260,8 @@ function buildTargetRollData(targetActor) {
 			if (targetActorData.abilities[ability]?.mod !== undefined) {
 				target[ability] = targetActorData.abilities[ability].mod;
 			}
-			if (targetActorData.abilities[ability]?.base !== undefined) {
-				target[ability + 'Base'] = targetActorData.abilities[ability].base;
+			if (targetActorData.abilities[ability]?.value !== undefined) {
+				target[ability + 'Base'] = targetActorData.abilities[ability].value;
 			}
 		});
 	}
@@ -2782,8 +2782,8 @@ export async function injectDamageCard(message, html, data) {
 								if (baseRollData.abilities[ability]?.mod !== undefined) {
 									baseRollData[ability] = baseRollData.abilities[ability].mod; // @cha = modifier
 								}
-								if (baseRollData.abilities[ability]?.base !== undefined) {
-									baseRollData[ability + 'Base'] = baseRollData.abilities[ability].base; // @chaBase = base score
+								if (baseRollData.abilities[ability]?.value !== undefined) {
+									baseRollData[ability + 'Base'] = baseRollData.abilities[ability].value; // @chaBase = base score
 								}
 							});
 						}
@@ -5652,8 +5652,8 @@ function attachDamageCardListeners(html, messageId) {
 						if (casterRollData.abilities[ability]?.mod !== undefined) {
 							casterRollData[ability] = casterRollData.abilities[ability].mod;
 						}
-						if (casterRollData.abilities[ability]?.base !== undefined) {
-							casterRollData[ability + 'Base'] = casterRollData.abilities[ability].base;
+						if (casterRollData.abilities[ability]?.value !== undefined) {
+							casterRollData[ability + 'Base'] = casterRollData.abilities[ability].value;
 						}
 					});
 				}
