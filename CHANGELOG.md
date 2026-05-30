@@ -4,6 +4,26 @@ All notable changes to this fork of `shadowdark-extras` are documented here.
 
 Format based loosely on [Keep a Changelog](https://keepachangelog.com/).
 
+## [6.10.21] — 2026-05-30 — Journal page editor crash fix
+
+A patch release fixing a crash when editing a journal page through the SDX
+editor dialog. Verified against Foundry 14.362 / Shadowdark 4.0.6.
+
+### Fixed
+
+- **Editing a journal page threw "A document and fieldName must be provided
+  when creating an editor with collaborative editing."** The
+  `<prose-mirror>` element in `journal-editor.hbs` carried
+  `collaborate="false"`, but Foundry's `HTMLProseMirrorElement` enables
+  collaborative editing via `this.hasAttribute("collaborate")` — a
+  **presence-only** check that ignores the value. So `collaborate="false"`
+  read as `true`, turning collaboration on. Because `SdxJournalPageEditor`
+  is a plain ApplicationV2 form with no bound document (it saves `content`
+  manually via its form handler), `ProseMirrorEditor.create` then threw on
+  the missing document/fieldName. Fixed by **omitting** the attribute
+  entirely — the only way to disable collaborative editing on the element.
+  Verified live: the editor mounts with zero console errors.
+
 ## [6.10.20] — 2026-05-27 — Foundry v14 / Shadowdark 4.x compatibility sweep
 
 A maintenance release fixing twelve regressions exposed by Foundry v13/v14
