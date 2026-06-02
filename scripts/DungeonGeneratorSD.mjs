@@ -7,6 +7,7 @@ const FilePicker = foundry.applications.apps.FilePicker?.implementation ?? globa
  */
 
 import { getSelectedFloorTile, getSelectedWallTile, getSelectedDoorTile, getCurrentElevation, getSceneLevelContext, applySceneLevelData, getDungeonBackground, ensureBackgroundDrawing } from "./DungeonPainterSD.mjs";
+import { generateCaveLayout, buildCaveLoops, buildMixedLoops, generateCurvedWalls, generateCurvedWallVisuals, generateFringeCaves } from "./DungeonCaveSD.mjs";
 
 const MODULE_ID = "shadowdark-extras";
 const GRID_SIZE = 100;
@@ -66,7 +67,8 @@ let _generatorSettings = {
     textured: true,
     wallShadows: false,
     wallColor: "#5C3D3D",
-    thickness: 20
+    thickness: 20,
+    style: "rooms"
 };
 
 // ═══════════════════════════════════════════════════════
@@ -552,6 +554,76 @@ export function generateLayout(params, rng) {
     return { floors, corridors, placedRooms, doorPositions, entranceEdges, roomData, adjacency };
 }
 
+/**
+ * Mixed layout: a rooms-and-corridors core with organic cave blobs grown off
+ * its periphery and tunnel-connected. Returns the merged floor set plus the
+ * per-region cell sets so generateDungeon can wall each region appropriately
+ * (straight room walls, curved cave walls, shared open seam).
+ */
+export function generateMixedLayout(params, rng) {
+    const base = generateLayout(params, rng);
+    const { caveCells, tunnelCells, caveChambers } =
+        generateFringeCaves(base.floors, { density: params.density }, rng);
+
+    const merged = new Set(base.floors);
+    for (const k of caveCells) merged.add(k);
+    for (const k of tunnelCells) merged.add(k);
+
+    // Close 1-wide void gaps (a void cell with floor on two OPPOSITE sides) by
+    // filling them as cave floor. This removes the parallel "double wall"
+    // corridors between the cave blob and the rooms, leaving broad open seams.
+    {
+        let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+        for (const k of merged) { const [x, y] = k.split(",").map(Number); if (x < minX) minX = x; if (y < minY) minY = y; if (x > maxX) maxX = x; if (y > maxY) maxY = y; }
+        for (let pass = 0; pass < 4; pass++) {
+            const add = [];
+            for (let x = minX; x <= maxX; x++) for (let y = minY; y <= maxY; y++) {
+                const k = `${x},${y}`;
+                if (merged.has(k)) continue;
+                const N = merged.has(`${x},${y - 1}`), S = merged.has(`${x},${y + 1}`);
+                const E = merged.has(`${x + 1},${y}`), W = merged.has(`${x - 1},${y}`);
+                if (!((N && S) || (E && W))) continue;
+                // Only close gaps at the cave interface — never merge two rooms
+                // that intentionally share a thin wall.
+                const touchesCave = caveCells.has(`${x},${y - 1}`) || caveCells.has(`${x},${y + 1}`)
+                    || caveCells.has(`${x + 1},${y}`) || caveCells.has(`${x - 1},${y}`);
+                if (touchesCave) add.push(k);
+            }
+            if (!add.length) break;
+            for (const k of add) { merged.add(k); caveCells.add(k); }
+        }
+    }
+
+    // Cave chambers become extra pseudo-rooms (stairs/clutter/narrative anchors),
+    // each linked to the entrance room for graph connectivity.
+    const placedRooms = [...base.placedRooms];
+    const roomData = [...base.roomData];
+    const adjacency = (base.adjacency instanceof Map) ? base.adjacency : new Map();
+    for (const c of caveChambers) {
+        const room = { x: c.x, y: c.y, w: 1, h: 1, cx: c.x, cy: c.y, left: c.x, right: c.x + 1, top: c.y, bottom: c.y + 1 };
+        const idx = placedRooms.length;
+        placedRooms.push(room);
+        roomData.push({ room, isStart: false });
+        if (!adjacency.has(idx)) adjacency.set(idx, new Set());
+        adjacency.get(idx).add(0);
+        if (adjacency.has(0)) adjacency.get(0).add(idx);
+    }
+
+    return {
+        floors: merged,
+        corridors: base.corridors,
+        placedRooms,
+        doorPositions: base.doorPositions,
+        entranceEdges: base.entranceEdges,
+        roomData,
+        adjacency,
+        _isMixed: true,
+        _roomCells: base.floors,   // straight-walled
+        _caveCells: caveCells,     // curved-walled
+        _tunnelCells: tunnelCells, // straight-walled connectors
+    };
+}
+
 // Place a single room from a walker's current position
 function _stepWalker(walker, placedRooms, floors, corridors, doorPositions, entranceEdges, roomData, params, rng, markCorridorEdges, layCorridor) {
     const { spacing, minRoomSize, maxRoomSize } = params;
@@ -639,7 +711,7 @@ function addRoomFloorsTo(room, floors) {
 //  WALL BUILDER (logical walls for Foundry)
 // ═══════════════════════════════════════════════════════
 
-export function generateWalls(floors, offset, entranceEdges, wallThickness) {
+export function generateWalls(floors, offset, entranceEdges, wallThickness, solidFloors = floors) {
     const wallsData = [];
     const entranceSet = new Set(entranceEdges.map(e => `${e.x},${e.y},${e.dir}`));
     const gridSize = GRID_SIZE;
@@ -661,7 +733,7 @@ export function generateWalls(floors, offset, entranceEdges, wallThickness) {
 
             if (entranceSet.has(`${gx},${gy},${d.name}`)) continue;
 
-            if (!floors.has(neighborKey)) {
+            if (!solidFloors.has(neighborKey)) {
                 let x1 = px + (d.ax * gridSize);
                 let y1 = py + (d.ay * gridSize);
                 let x2 = px + (d.bx * gridSize);
@@ -690,13 +762,13 @@ export function generateWalls(floors, offset, entranceEdges, wallThickness) {
 
                 const startKeys = getKeys(startVec.dx, startVec.dy);
                 let modStart = 0;
-                if (!floors.has(startKeys.sourceFlank)) modStart = 1;
-                else if (floors.has(startKeys.voidFlank)) modStart = -1;
+                if (!solidFloors.has(startKeys.sourceFlank)) modStart = 1;
+                else if (solidFloors.has(startKeys.voidFlank)) modStart = -1;
 
                 const endKeys = getKeys(endVec.dx, endVec.dy);
                 let modEnd = 0;
-                if (!floors.has(endKeys.sourceFlank)) modEnd = 1;
-                else if (floors.has(endKeys.voidFlank)) modEnd = -1;
+                if (!solidFloors.has(endKeys.sourceFlank)) modEnd = 1;
+                else if (solidFloors.has(endKeys.voidFlank)) modEnd = -1;
 
                 if (modStart !== 0) {
                     const amount = wallThickness * modStart;
@@ -726,7 +798,7 @@ export function generateWalls(floors, offset, entranceEdges, wallThickness) {
 //  WALL VISUAL BUILDER (Drawing documents)
 // ═══════════════════════════════════════════════════════
 
-export function generateWallVisuals(floors, offset, options, entranceEdges) {
+export function generateWallVisuals(floors, offset, options, entranceEdges, solidFloors = floors) {
     const { useTexture, wallColor, wallThickness, wallTilePath } = options;
     const gridSize = GRID_SIZE;
     const drawingsData = [];
@@ -742,16 +814,16 @@ export function generateWallVisuals(floors, offset, options, entranceEdges) {
     for (const coord of floors) {
         const [gx, gy] = coord.split(',').map(Number);
 
-        if (!floors.has(`${gx},${gy - 1}`) && !entranceSet.has(`${gx},${gy},N`)) {
+        if (!solidFloors.has(`${gx},${gy - 1}`) && !entranceSet.has(`${gx},${gy},N`)) {
             segments.N[`${gx},${gy}`] = { gx, gy, len: 1 };
         }
-        if (!floors.has(`${gx},${gy + 1}`) && !entranceSet.has(`${gx},${gy},S`)) {
+        if (!solidFloors.has(`${gx},${gy + 1}`) && !entranceSet.has(`${gx},${gy},S`)) {
             segments.S[`${gx},${gy}`] = { gx, gy, len: 1 };
         }
-        if (!floors.has(`${gx + 1},${gy}`) && !entranceSet.has(`${gx},${gy},E`)) {
+        if (!solidFloors.has(`${gx + 1},${gy}`) && !entranceSet.has(`${gx},${gy},E`)) {
             segments.E[`${gx},${gy}`] = { gx, gy, len: 1 };
         }
-        if (!floors.has(`${gx - 1},${gy}`) && !entranceSet.has(`${gx},${gy},W`)) {
+        if (!solidFloors.has(`${gx - 1},${gy}`) && !entranceSet.has(`${gx},${gy},W`)) {
             segments.W[`${gx},${gy}`] = { gx, gy, len: 1 };
         }
     }
@@ -868,10 +940,10 @@ export function generateWallVisuals(floors, offset, options, entranceEdges) {
         const px = (gx + offset.x) * gridSize;
         const py = (gy + offset.y) * gridSize;
 
-        const hasN = !floors.has(`${gx},${gy - 1}`);
-        const hasS = !floors.has(`${gx},${gy + 1}`);
-        const hasE = !floors.has(`${gx + 1},${gy}`);
-        const hasW = !floors.has(`${gx - 1},${gy}`);
+        const hasN = !solidFloors.has(`${gx},${gy - 1}`);
+        const hasS = !solidFloors.has(`${gx},${gy + 1}`);
+        const hasE = !solidFloors.has(`${gx + 1},${gy}`);
+        const hasW = !solidFloors.has(`${gx - 1},${gy}`);
 
         if (hasN && hasW) createPoly(px - thickness, py - thickness, thickness, thickness, true);
         if (hasN && hasE) createPoly(px + gridSize, py - thickness, thickness, thickness, true);
@@ -1098,6 +1170,7 @@ export async function generateDungeon(config) {
         // string fields: validate or fall back
         wallColor: /^#[0-9a-f]{6}$/i.test(config.wallColor) ? config.wallColor : "#5C3D3D",
         seed:      typeof config.seed === "string" ? config.seed.slice(0, 100) : "default",
+        style:     ["cave", "mixed"].includes(config.style) ? config.style : "rooms",
     };
 
     const {
@@ -1113,8 +1186,11 @@ export async function generateDungeon(config) {
         useTexture = false,
         wallShadows = false,
         wallColor = "#5C3D3D",
-        wallThickness = 20
+        wallThickness = 20,
+        style = "rooms"
     } = safeConfig;
+    const isCave = style === "cave";
+    const isMixed = style === "mixed";
 
     // Validate stairs fit in requested rooms (exclude start room)
     const totalStairs = stairs + stairsDown;
@@ -1165,14 +1241,13 @@ export async function generateDungeon(config) {
         // 3. Create seeded RNG
         const rng = seedrandom(seed);
 
-        // 4. Generate layout
-        const layout = generateLayout({
-            roomCount,
-            density,
-            linearity: 1 - branching,
-            roomSizeBias,
-            symmetry
-        }, rng);
+        // 4. Generate layout (rooms-and-corridors, organic cave, or mixed)
+        const roomParams = { roomCount, density, linearity: 1 - branching, roomSizeBias, symmetry };
+        const layout = isCave
+            ? generateCaveLayout({ roomCount, density }, rng)
+            : isMixed
+                ? generateMixedLayout(roomParams, rng)
+                : generateLayout(roomParams, rng);
 
         // 5. Fit scene to content (expand only if Levels is active to preserve other levels)
         let { offset, width, height } = fitToContent(layout.floors, GRID_SIZE, 300);
@@ -1255,20 +1330,51 @@ export async function generateDungeon(config) {
         // 7. Render floor tiles
         await renderFloorTilesWithElevation(scene, layout.floors, rng, offset, floorTexture, createWithElevation);
 
-        // 8. Generate logical walls
-        const wallsData = generateWalls(layout.floors, offset, layout.entranceEdges, wallThickness);
+        // 8 + 9. Generate walls + wall visuals. Caves trace/smooth the floor
+        // boundary into curved segments; rooms use the axis-aligned cell edges.
+        let wallsData, drawingsData;
+        const caveWallThickness = Math.max(wallThickness, 45);
+        if (isMixed) {
+            // ONE unified wall boundary around the whole merged region. Cave
+            // segments are smoothed, room segments stay sharp. A single boundary
+            // means no two-system seam and no parallel double walls.
+            const mixThickness = Math.max(wallThickness, 30);
+            const mixedLoops = buildMixedLoops(layout.floors, layout._caveCells, offset, GRID_SIZE);
+            wallsData = generateCurvedWalls(mixedLoops, mixThickness);
+            drawingsData = generateCurvedWallVisuals(mixedLoops, { useTexture, wallColor, wallThickness: mixThickness, wallTilePath });
+            console.log(`${MODULE_ID} | Mixed: ${mixedLoops.length} unified loop(s), ${wallsData.length} wall segments`);
+        } else if (isCave) {
+            const caveLoops = buildCaveLoops(layout.floors, offset, GRID_SIZE);
+            // Caves use a chunkier wall so the rocky band covers the square
+            // floor-cell fringe and reads as a smooth cavern edge.
+            wallsData = generateCurvedWalls(caveLoops, caveWallThickness);
+            drawingsData = generateCurvedWallVisuals(caveLoops, {
+                useTexture, wallColor, wallThickness: caveWallThickness, wallTilePath
+            });
+            console.log(`${MODULE_ID} | Cave: ${caveLoops.length} boundary loop(s), ${wallsData.length} wall segments`);
+        } else {
+            wallsData = generateWalls(layout.floors, offset, layout.entranceEdges, wallThickness);
+            drawingsData = generateWallVisuals(layout.floors, offset, {
+                useTexture,
+                wallColor,
+                wallThickness,
+                wallTilePath
+            }, layout.entranceEdges);
+        }
 
-        // 9. Generate wall visuals
-        const drawingsData = generateWallVisuals(layout.floors, offset, {
-            useTexture,
-            wallColor,
-            wallThickness,
-            wallTilePath
-        }, layout.entranceEdges);
-
-        // 10. Generate doors (using selected door tile for swing animation)
+        // 10. Generate doors (using selected door tile for swing animation).
+        // Drop orphaned doors: a real doorway must have a wall (non-floor) on
+        // each side of the opening. In mixed maps the cave can erode the wall a
+        // room-generator door was set into, leaving it floating in open floor.
         const doorTilePath = getSelectedDoorTile();
-        const doorsData = generateDoors(layout.doorPositions, offset, wallThickness, doorTilePath);
+        const doorWallsIntact = (d) => {
+            const ns = (d.dir === Direction.NORTH || d.dir === Direction.SOUTH);
+            const f1 = ns ? `${d.x - 1},${d.y}` : `${d.x},${d.y - 1}`;
+            const f2 = ns ? `${d.x + 1},${d.y}` : `${d.x},${d.y + 1}`;
+            return !layout.floors.has(f1) && !layout.floors.has(f2);
+        };
+        const validDoors = layout.doorPositions.filter(doorWallsIntact);
+        const doorsData = generateDoors(validDoors, offset, wallThickness, doorTilePath);
 
         // 11. Create all walls (logical + doors)
         const allWalls = [...wallsData, ...doorsData];

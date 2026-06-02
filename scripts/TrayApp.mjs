@@ -1432,6 +1432,10 @@ export class TrayApp extends HandlebarsApplicationMixin(ApplicationV2) {
             if (seedInput) seedInput.value = newSeed;
         });
 
+        // Restore persisted generation style into the Style selector.
+        const styleSel = elem.querySelector(".dgen-style");
+        if (styleSel) styleSel.value = getGeneratorSettings().style || "rooms";
+
         // Generator apply button
         elem.querySelector(".dgen-apply")?.addEventListener("click", async (e) => {
             e.preventDefault();
@@ -1454,11 +1458,14 @@ export class TrayApp extends HandlebarsApplicationMixin(ApplicationV2) {
             const wColor = elem.querySelector(".dgen-wall-color")?.value || "#5C3D3D";
             const thick = isTextured ? 20 : parseInt(elem.querySelector(".dgen-thickness")?.value || "20");
 
+            const styleVal = elem.querySelector(".dgen-style")?.value;
+            const style = ["cave", "mixed"].includes(styleVal) ? styleVal : "rooms";
+
             // Persist settings
             setGeneratorSettings({
                 rooms, density: dens, branching: branch, roomSize: roomSz,
                 symmetry: sym, stairs: stairsVal, stairsDown: stairsDownVal, clutter: clutterVal,
-                textured: isTextured, wallShadows: isWallShadows, wallColor: wColor, thickness: thick
+                textured: isTextured, wallShadows: isWallShadows, wallColor: wColor, thickness: thick, style
             });
 
             const config = {
@@ -1474,7 +1481,8 @@ export class TrayApp extends HandlebarsApplicationMixin(ApplicationV2) {
                 useTexture: isTextured,
                 wallShadows: isWallShadows,
                 wallColor: wColor,
-                wallThickness: thick
+                wallThickness: thick,
+                style
             };
 
             const levels = parseInt(elem.querySelector(".dgen-levels")?.value || "1");

@@ -87,8 +87,9 @@ import { initTemplateElevationBadge } from "./TemplateElevationBadgeSD.mjs";
 // Map-builder entry points — pulled in so we can expose them on module.api
 // for MCP / external automation. None of these modules register hooks at import
 // time (verified), so this only adds the named exports to the bundle graph.
-import { generateDungeon, getGeneratorSettings, setGeneratorSettings, generateRandomSeed } from "./DungeonGeneratorSD.mjs";
+import { generateDungeon, getGeneratorSettings, setGeneratorSettings, generateRandomSeed, generateLayout, generateMixedLayout } from "./DungeonGeneratorSD.mjs";
 import { buildHexDungeonScene } from "./HexDungeonBridgeSD.mjs";
+import { generateCaveLayout, buildCaveLoops, traceBoundaryLoops } from "./DungeonCaveSD.mjs";
 import { generateHexMap, clearGeneratedTiles } from "./HexGeneratorSD.mjs";
 import { getSceneLevelContext, applySceneLevelData, getDungeonBackground } from "./DungeonPainterSD.mjs";
 import { placeChangeLevelRegion, placeDungeonSurface, placeDungeonDecor } from "./DungeonRegionsSD.mjs";
@@ -19428,7 +19429,12 @@ Hooks.on("setup", () => {
 			internal: {
 				applySceneLevelData: audited("internal.applySceneLevelData", gmOnly("internal.applySceneLevelData", applySceneLevelData)),
 				getSceneLevelContext: audited("internal.getSceneLevelContext", getSceneLevelContext),
-				getDungeonBackground: audited("internal.getDungeonBackground", getDungeonBackground)
+				getDungeonBackground: audited("internal.getDungeonBackground", getDungeonBackground),
+				caveLayout: generateCaveLayout,
+				caveLoops: buildCaveLoops,
+				traceBoundaryLoops: traceBoundaryLoops,
+				layout: generateLayout,
+				mixedLayout: generateMixedLayout
 			}
 		};
 		//console.log(`${MODULE_ID} | Module API registered`);
