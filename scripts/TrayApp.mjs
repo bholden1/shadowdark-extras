@@ -1460,12 +1460,13 @@ export class TrayApp extends HandlebarsApplicationMixin(ApplicationV2) {
 
             const styleVal = elem.querySelector(".dgen-style")?.value;
             const style = ["cave", "mixed", "maze", "rogue", "digger", "uniform"].includes(styleVal) ? styleVal : "rooms";
+            const useBiomes = elem.querySelector(".dgen-biomes")?.checked ?? false;
 
             // Persist settings
             setGeneratorSettings({
                 rooms, density: dens, branching: branch, roomSize: roomSz,
                 symmetry: sym, stairs: stairsVal, stairsDown: stairsDownVal, clutter: clutterVal,
-                textured: isTextured, wallShadows: isWallShadows, wallColor: wColor, thickness: thick, style
+                textured: isTextured, wallShadows: isWallShadows, wallColor: wColor, thickness: thick, style, biomes: useBiomes
             });
 
             const config = {
@@ -1482,7 +1483,8 @@ export class TrayApp extends HandlebarsApplicationMixin(ApplicationV2) {
                 wallShadows: isWallShadows,
                 wallColor: wColor,
                 wallThickness: thick,
-                style
+                style,
+                biomes: useBiomes
             };
 
             const levels = parseInt(elem.querySelector(".dgen-levels")?.value || "1");

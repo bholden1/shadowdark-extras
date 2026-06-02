@@ -90,6 +90,7 @@ import { initTemplateElevationBadge } from "./TemplateElevationBadgeSD.mjs";
 import { generateDungeon, getGeneratorSettings, setGeneratorSettings, generateRandomSeed, generateLayout, generateMixedLayout } from "./DungeonGeneratorSD.mjs";
 import { buildHexDungeonScene } from "./HexDungeonBridgeSD.mjs";
 import { generateCaveLayout, buildCaveLoops, traceBoundaryLoops } from "./DungeonCaveSD.mjs";
+import { assignBiomes, buildCellFloorMap } from "./DungeonBiomesSD.mjs";
 import { generateHexMap, clearGeneratedTiles } from "./HexGeneratorSD.mjs";
 import { getSceneLevelContext, applySceneLevelData, getDungeonBackground } from "./DungeonPainterSD.mjs";
 import { placeChangeLevelRegion, placeDungeonSurface, placeDungeonDecor } from "./DungeonRegionsSD.mjs";
@@ -19440,7 +19441,9 @@ Hooks.on("setup", () => {
 				caveLoops: buildCaveLoops,
 				traceBoundaryLoops: traceBoundaryLoops,
 				layout: generateLayout,
-				mixedLayout: generateMixedLayout
+				mixedLayout: generateMixedLayout,
+				assignBiomes: assignBiomes,
+				buildCellFloorMap: buildCellFloorMap
 			}
 		};
 		//console.log(`${MODULE_ID} | Module API registered`);

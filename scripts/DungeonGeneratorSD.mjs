@@ -8,6 +8,7 @@ const FilePicker = foundry.applications.apps.FilePicker?.implementation ?? globa
 
 import { getSelectedFloorTile, getSelectedWallTile, getSelectedDoorTile, getCurrentElevation, getSceneLevelContext, applySceneLevelData, getDungeonBackground, ensureBackgroundDrawing } from "./DungeonPainterSD.mjs";
 import { generateCaveLayout, buildCaveLoops, buildMixedLoops, generateCurvedWalls, generateCurvedWallVisuals, generateFringeCaves, rotjsLayout } from "./DungeonCaveSD.mjs";
+import { assignBiomes, buildCellFloorMap, placeBiomeProps } from "./DungeonBiomesSD.mjs";
 
 const ROTJS_STYLES = ["maze", "rogue", "digger", "uniform"];
 
@@ -70,7 +71,8 @@ let _generatorSettings = {
     wallShadows: false,
     wallColor: "#5C3D3D",
     thickness: 20,
-    style: "rooms"
+    style: "rooms",
+    biomes: false
 };
 
 // ═══════════════════════════════════════════════════════
@@ -1123,14 +1125,15 @@ export function fitToContent(floors, gridSize, padding) {
 //  TILE RENDERER
 // ═══════════════════════════════════════════════════════
 
-export async function renderFloorTilesWithElevation(scene, floors, rng, offset, floorTexture, createWithElevation) {
+export async function renderFloorTilesWithElevation(scene, floors, rng, offset, floorTexture, createWithElevation, floorResolver = null) {
     const gridSize = GRID_SIZE;
     const tileDocs = [];
 
     for (const coord of floors) {
         const [gx, gy] = coord.split(',').map(Number);
+        const tex = floorResolver ? (floorResolver(gx, gy) || floorTexture) : floorTexture;
         tileDocs.push({
-            texture: makeTopLeftTileTexture(floorTexture),
+            texture: makeTopLeftTileTexture(tex),
             x: (gx + offset.x) * gridSize,
             y: (gy + offset.y) * gridSize,
             width: gridSize,
@@ -1173,6 +1176,7 @@ export async function generateDungeon(config) {
         wallColor: /^#[0-9a-f]{6}$/i.test(config.wallColor) ? config.wallColor : "#5C3D3D",
         seed:      typeof config.seed === "string" ? config.seed.slice(0, 100) : "default",
         style:     ["cave", "mixed", ...ROTJS_STYLES].includes(config.style) ? config.style : "rooms",
+        biomes:    !!config.biomes,
     };
 
     const {
@@ -1189,11 +1193,13 @@ export async function generateDungeon(config) {
         wallShadows = false,
         wallColor = "#5C3D3D",
         wallThickness = 20,
-        style = "rooms"
+        style = "rooms",
+        biomes = false
     } = safeConfig;
     const isCave = style === "cave";
     const isMixed = style === "mixed";
     const isRotjs = ROTJS_STYLES.includes(style);
+    const useBiomes = biomes && !isCave; // biomes theme rooms; pure cave is one biome
 
     // Validate stairs fit in requested rooms (exclude start room)
     const totalStairs = stairs + stairsDown;
@@ -1332,8 +1338,17 @@ export async function generateDungeon(config) {
             }
         }
 
-        // 7. Render floor tiles
-        await renderFloorTilesWithElevation(scene, layout.floors, rng, offset, floorTexture, createWithElevation);
+        // 6b. Biomes: assign a biome per room, theme floors + props.
+        let biomeMap = null, biomeProps = [], floorResolver = null;
+        if (useBiomes && layout.roomData?.length) {
+            biomeMap = assignBiomes(layout.roomData, rng);
+            const cellFloor = buildCellFloorMap(layout.roomData, biomeMap, layout.floors);
+            floorResolver = (gx, gy) => cellFloor.get(`${gx},${gy}`) || floorTexture;
+            biomeProps = await placeBiomeProps(layout.roomData, biomeMap, offset, GRID_SIZE, Math.max(clutter, 2), rng);
+        }
+
+        // 7. Render floor tiles (per-biome textures when biomes are on)
+        await renderFloorTilesWithElevation(scene, layout.floors, rng, offset, floorTexture, createWithElevation, floorResolver);
 
         // 8 + 9. Generate walls + wall visuals. Caves trace/smooth the floor
         // boundary into curved segments; rooms use the axis-aligned cell edges.
@@ -1476,9 +1491,14 @@ export async function generateDungeon(config) {
             }
         }
 
-        // 14. Place clutter tiles in rooms
+        // 13b. Biome props (replace generic clutter when biomes are on)
+        if (biomeProps.length > 0) {
+            await createWithElevation("Tile", biomeProps);
+        }
+
+        // 14. Place clutter tiles in rooms (skipped when biomes provide props)
         const placedClutter = [];
-        if (clutter > 0 && layout.roomData.length > 0) {
+        if (clutter > 0 && !useBiomes && layout.roomData.length > 0) {
             // Discover clutter files from known folder
             const clutterFolder = `modules/${MODULE_ID}/assets/Dungeon/clutter`;
             let clutterFiles = [];

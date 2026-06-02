@@ -1070,6 +1070,11 @@
                             </select>
                         </div>
                         <div class="dgen-row">
+                            <label>Biomes</label>
+                            <input type="checkbox" class="dgen-biomes" {{#if generatorSettings.biomes}}checked{{/if}}>
+                            <span class="dgen-value" style="font-size:10px;opacity:0.7;">themed rooms</span>
+                        </div>
+                        <div class="dgen-row">
                             <label>Rooms</label>
                             <input type="range" class="dgen-rooms" min="3" max="20" value="{{generatorSettings.rooms}}"
                                 step="1">
