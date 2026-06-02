@@ -18801,8 +18801,14 @@ SDX.templates = {
 			const forceClearTargets = () => {
 				const targets = [...game.user.targets];
 
-				// 1. Try standard detargeting (might fail silently due to system bug)
-				game.user.targets.forEach(t => t.setTarget(false, { user: game.user, releaseOthers: false }).catch(e => { }));
+				// 1. Try standard detargeting. Foundry v13/v14 Token#setTarget is
+				// synchronous and returns void — calling .catch() on it threw
+				// "Cannot read properties of undefined (reading 'catch')", which
+				// aborted template placement whenever a token was targeted
+				// (healing/template items then did nothing). Wrap instead.
+				game.user.targets.forEach(t => {
+					try { t.setTarget(false, { user: game.user, releaseOthers: false }); } catch (e) { /* ignore */ }
+				});
 
 				// 2. Force local cleanup (bypass hooks) to ensure state is clear
 				game.user.targets.clear();
