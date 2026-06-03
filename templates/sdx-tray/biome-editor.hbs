@@ -1,0 +1,87 @@
+<div class="sdx-biome-editor">
+    <style>
+        .sdx-biome-editor { display: flex; flex-direction: column; gap: 8px; height: 100%; }
+        .sdx-biome-editor .hint { font-size: 12px; opacity: .8; margin: 0; }
+        .sdx-biome-editor .biome-list { flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; padding-right: 4px; }
+        .sdx-biome-editor .biome-row { border: 1px solid var(--color-border-light-tertiary, #999); border-radius: 6px; padding: 8px; background: rgba(0,0,0,0.03); }
+        .sdx-biome-editor .row-head { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+        .sdx-biome-editor .biome-key { font-weight: bold; }
+        .sdx-biome-editor .biome-status { font-size: 10px; text-transform: uppercase; padding: 1px 6px; border-radius: 8px; border: 1px solid currentColor; opacity: .85; }
+        .sdx-biome-editor .biome-status.built-in { color: #5b6b7a; }
+        .sdx-biome-editor .biome-status.overridden { color: #9a6b00; }
+        .sdx-biome-editor .biome-status.custom { color: #1f7a3d; }
+        .sdx-biome-editor .row-head .spacer { flex: 1; }
+        .sdx-biome-editor .fields { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 10px; }
+        .sdx-biome-editor .fields label { display: flex; flex-direction: column; gap: 2px; font-size: 11px; }
+        .sdx-biome-editor .fields label.wide { grid-column: 1 / -1; }
+        .sdx-biome-editor .fields .with-browse { display: flex; gap: 4px; align-items: center; }
+        .sdx-biome-editor .fields .with-browse input { flex: 1; }
+        .sdx-biome-editor textarea.biome-props { resize: vertical; font-family: monospace; font-size: 11px; }
+        .sdx-biome-editor button { flex: 0 0 auto; }
+        .sdx-biome-editor .save { grid-column: 1 / -1; }
+        .sdx-biome-editor .reset-all { color: #8a1f1f; }
+    </style>
+
+    {{#unless isGM}}<p class="hint" style="color:#8a1f1f;">Read-only — only the GM can save biome changes.</p>{{/unless}}
+    <p class="hint">Built-in biomes can be overridden (and reverted); custom biomes can be deleted. Floor/prop paths are images under your data directory. Props: one image path per line.</p>
+
+    <div class="biome-list">
+        {{#each biomes}}
+        <div class="biome-row" data-key="{{key}}">
+            <div class="row-head">
+                <label class="biome-enable" title="Include this biome in random room assignment">
+                    <input type="checkbox" class="biome-enabled" data-action="toggleEnabled" {{#if enabled}}checked{{/if}}>
+                </label>
+                <span class="biome-key">{{key}}</span>
+                <span class="biome-status {{status}}">{{status}}</span>
+                <span class="spacer"></span>
+                {{#if canRemove}}
+                <button type="button" data-action="removeBiome">{{#if isBuiltin}}Revert{{else}}Delete{{/if}}</button>
+                {{/if}}
+            </div>
+            <div class="fields">
+                <label>Label <input type="text" class="biome-label" value="{{label}}"></label>
+                <label>Weight <input type="number" class="biome-weight" min="1" step="1" value="{{weight}}"></label>
+                <label class="wide">Floor texture
+                    <span class="with-browse">
+                        <input type="text" class="biome-floor" value="{{floor}}">
+                        <button type="button" data-action="browseFloor"><i class="fa-solid fa-folder-open"></i></button>
+                    </span>
+                </label>
+                <label class="wide">Decor-pack category (optional) <input type="text" class="biome-ddpack" value="{{ddpack}}"></label>
+                <label class="wide">Props (one path per line)
+                    <textarea class="biome-props" rows="3">{{props}}</textarea>
+                    <button type="button" data-action="browseProp"><i class="fa-solid fa-plus"></i> Add prop…</button>
+                </label>
+                <button type="button" class="save" data-action="saveBiome"><i class="fa-solid fa-floppy-disk"></i> Save</button>
+            </div>
+        </div>
+        {{/each}}
+    </div>
+
+    <hr>
+
+    <div class="biome-row new-biome-row">
+        <div class="row-head"><strong><i class="fa-solid fa-plus"></i> Add biome</strong></div>
+        <div class="fields">
+            <label>Key <input type="text" class="new-biome-key" placeholder="e.g. volcano"></label>
+            <label>Label <input type="text" class="biome-label" placeholder="Volcano"></label>
+            <label>Weight <input type="number" class="biome-weight" min="1" step="1" value="1"></label>
+            <label class="wide">Floor texture
+                <span class="with-browse">
+                    <input type="text" class="biome-floor" placeholder="modules/…/floor.webp">
+                    <button type="button" data-action="browseFloor"><i class="fa-solid fa-folder-open"></i></button>
+                </span>
+            </label>
+            <label class="wide">Decor-pack category (optional) <input type="text" class="biome-ddpack"></label>
+            <label class="wide">Props (one path per line)
+                <textarea class="biome-props" rows="2"></textarea>
+                <button type="button" data-action="browseProp"><i class="fa-solid fa-plus"></i> Add prop…</button>
+            </label>
+            <button type="button" class="save" data-action="addBiome"><i class="fa-solid fa-plus"></i> Add biome</button>
+        </div>
+    </div>
+
+    <hr>
+    <button type="button" class="reset-all" data-action="resetAll"><i class="fa-solid fa-trash"></i> Reset all custom biomes</button>
+</div>

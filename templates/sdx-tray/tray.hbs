@@ -1029,6 +1029,10 @@
                             wallShadows}}checked{{/if}} />
                         <span><i class="fas fa-adjust"></i> Wall Shadows</span>
                     </label>
+                    <label class="dungeon-option-toggle">
+                        <input type="checkbox" class="dungeon-curved-walls-checkbox" {{#if curvedWalls}}checked{{/if}} />
+                        <span><i class="fas fa-bezier-curve"></i> Curved Walls</span>
+                    </label>
                 </div>
 
                 {{#unless (eq dungeonMode 'intwalls')}}
@@ -1073,6 +1077,7 @@
                             <label>Biomes</label>
                             <input type="checkbox" class="dgen-biomes" {{#if generatorSettings.biomes}}checked{{/if}}>
                             <span class="dgen-value" style="font-size:10px;opacity:0.7;">themed rooms</span>
+                            <button type="button" class="dgen-edit-biomes" title="Add, edit, or override dungeon biomes">Edit…</button>
                         </div>
                         <div class="dgen-row">
                             <label>Rooms</label>
@@ -1120,6 +1125,12 @@
                             <input type="range" class="dgen-clutter" min="0" max="10"
                                 value="{{generatorSettings.clutter}}" step="1">
                             <span class="dgen-value">{{generatorSettings.clutter}}</span>
+                        </div>
+                        <div class="dgen-row">
+                            <label>Sconces</label>
+                            <input type="range" class="dgen-decor-lights" min="0" max="4"
+                                value="{{generatorSettings.decorLights}}" step="1">
+                            <span class="dgen-value">{{generatorSettings.decorLights}}</span>
                         </div>
                     </div>
 

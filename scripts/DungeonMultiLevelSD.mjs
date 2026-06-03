@@ -30,6 +30,7 @@ import {
 } from "./DungeonGeneratorSD.mjs";
 import { applySceneLevelData, getSelectedFloorTile, getSelectedWallTile, getSelectedDoorTile } from "./DungeonPainterSD.mjs";
 import { placeChangeLevelRegion } from "./DungeonRegionsSD.mjs";
+import { createDungeonOccupancy, generateDungeonDecor } from "./DungeonDecorSD.mjs";
 
 const MODULE_ID = "shadowdark-extras";
 const GRID_SIZE = 100;
@@ -357,13 +358,12 @@ async function browseClutter() {
 
 /** Scatter `clutter` decorative tiles per non-start room (non-overlapping). Mirrors the
  *  single-level generator's clutter pass; tiles are flagged dungeonClutter so regen clears them. */
-async function renderClutter(scene, layout, rng, offset, clutter, clutterItems, createWithElevation) {
+async function renderClutter(scene, layout, rng, offset, clutter, clutterItems, createWithElevation, occupancy) {
     if (clutter <= 0 || !clutterItems.length) return;
     const tiles = [];
     for (const rd of layout.roomData) {
         if (rd.isStart) continue;
         const room = rd.room;
-        const occupied = new Set();
         for (let c = 0; c < clutter; c++) {
             const item = clutterItems[Math.floor(rng() * clutterItems.length)];
             const cellsW = Math.ceil(item.w / GRID_SIZE), cellsH = Math.ceil(item.h / GRID_SIZE);
@@ -373,14 +373,11 @@ async function renderClutter(scene, layout, rng, offset, clutter, clutterItems, 
             do {
                 gx = room.left + Math.floor(rng() * fitW);
                 gy = room.top + Math.floor(rng() * fitH);
-                overlaps = false;
-                for (let ox = 0; ox < cellsW && !overlaps; ox++)
-                    for (let oy = 0; oy < cellsH && !overlaps; oy++)
-                        if (occupied.has(`${gx + ox},${gy + oy}`)) overlaps = true;
+                overlaps = !occupancy.canPlaceRect({ gx, gy, cellsW, cellsH }, { padding: 0.15, doorPadding: 0.35 });
                 tries++;
             } while (overlaps && tries < 20);
             if (overlaps) continue;
-            for (let ox = 0; ox < cellsW; ox++) for (let oy = 0; oy < cellsH; oy++) occupied.add(`${gx + ox},${gy + oy}`);
+            occupancy.occupyRect({ gx, gy, cellsW, cellsH }, { padding: 0.15, kind: "clutter" });
             tiles.push({
                 texture: { src: item.src, anchorX: 0, anchorY: 0 },
                 x: (gx + offset.x) * GRID_SIZE + (cellsW * GRID_SIZE - item.w) / 2,
@@ -393,9 +390,16 @@ async function renderClutter(scene, layout, rng, offset, clutter, clutterItems, 
     if (tiles.length) await createWithElevation("Tile", tiles);
 }
 
-async function renderLevel(scene, layout, offset, level, cfg, rng, clutterItems) {
+async function renderLevel(scene, layout, offset, level, cfg, rng, clutterItems, connectorCells = new Set()) {
     const levelContext = { levelId: level.id, elevation: level.bottom, rangeTop: level.top };
     const cwe = makeCreateWithElevation(scene, levelContext);
+    const occupancy = createDungeonOccupancy(layout);
+    for (const key of connectorCells) {
+        const [gx, gy] = String(key).split(",").map(Number);
+        if (Number.isFinite(gx) && Number.isFinite(gy)) {
+            occupancy.occupyRect({ gx, gy, cellsW: 1, cellsH: 1 }, { padding: 0.35, kind: "connector" });
+        }
+    }
 
     await clearSceneAtLevel(scene, levelContext, true);
     await renderFloorTilesWithElevation(scene, layout.floors, rng, offset, cfg.floorTexture, cwe);
@@ -421,7 +425,17 @@ async function renderLevel(scene, layout, offset, level, cfg, rng, clutterItems)
     }, connectedEdges);
     await cwe("Drawing", visuals);
 
-    await renderClutter(scene, layout, rng, offset, cfg.clutter, clutterItems, cwe);
+    await renderClutter(scene, layout, rng, offset, cfg.clutter, clutterItems, cwe, occupancy);
+    await generateDungeonDecor({
+        layout,
+        rng,
+        offset,
+        gridSize: GRID_SIZE,
+        createDocuments: cwe,
+        lightsPerRoom: cfg.decorLights,
+        occupancy,
+        includeTiles: cfg.decorTiles,
+    });
 }
 
 /**
@@ -519,6 +533,8 @@ export async function generateMultiLevelDungeon(config = {}) {
         levelNames: Array.isArray(config.levelNames) ? config.levelNames : null,
         roomCount: clamp(Math.round(config.roomCount ?? 10), 1, 50),
         clutter: clamp(Math.round(config.clutter ?? 0), 0, 20),
+        decorLights: clamp(Math.round(config.decorLights ?? 0), 0, 4),
+        decorTiles: config.decorTiles ?? true,
         density: config.density ?? 0.6,
         branching: config.branching ?? 0.5,
         roomSizeBias: config.roomSizeBias ?? 0.5,
@@ -660,7 +676,7 @@ export async function generateMultiLevelDungeon(config = {}) {
         // 6. Render each level with the shared offset.
         const clutterItems = cfg.clutter > 0 ? await browseClutter() : [];
         for (let i = 0; i < cfg.levelCount; i++) {
-            await renderLevel(scene, layouts[i], offset, levels[i], cfg, seedrandom(`${cfg.seed}:F${i}`), clutterItems);
+            await renderLevel(scene, layouts[i], offset, levels[i], cfg, seedrandom(`${cfg.seed}:F${i}`), clutterItems, usedByLevel[i]);
         }
 
         // 7. Connect levels: connector tiles (same xy) + a changeLevel region per link.

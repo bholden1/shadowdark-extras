@@ -90,7 +90,8 @@ import { initTemplateElevationBadge } from "./TemplateElevationBadgeSD.mjs";
 import { generateDungeon, getGeneratorSettings, setGeneratorSettings, generateRandomSeed, generateLayout, generateMixedLayout } from "./DungeonGeneratorSD.mjs";
 import { buildHexDungeonScene } from "./HexDungeonBridgeSD.mjs";
 import { generateCaveLayout, buildCaveLoops, traceBoundaryLoops } from "./DungeonCaveSD.mjs";
-import { assignBiomes, buildCellFloorMap } from "./DungeonBiomesSD.mjs";
+import { assignBiomes, buildCellFloorMap, getBiomeDefs, getCustomBiomes, setCustomBiome, removeCustomBiome, resetCustomBiomes, getEnabledBiomeKeys, getDisabledBiomes, setBiomeEnabled } from "./DungeonBiomesSD.mjs";
+import { openBiomeEditor } from "./BiomeEditorSD.mjs";
 import { generateHexMap, clearGeneratedTiles } from "./HexGeneratorSD.mjs";
 import { getSceneLevelContext, applySceneLevelData, getDungeonBackground } from "./DungeonPainterSD.mjs";
 import { placeChangeLevelRegion, placeDungeonSurface, placeDungeonDecor } from "./DungeonRegionsSD.mjs";
@@ -19422,6 +19423,17 @@ Hooks.on("setup", () => {
 			setGeneratorSettings: audited("setGeneratorSettings", gmOnly("setGeneratorSettings", setGeneratorSettings)),
 			generateRandomSeed: audited("generateRandomSeed", generateRandomSeed),
 			buildHexDungeonScene: audited("buildHexDungeonScene", gmOnly("buildHexDungeonScene", buildHexDungeonScene)),
+
+			// --- Biome presets (user-editable) ---
+			getBiomeDefinitions: audited("getBiomeDefinitions", getBiomeDefs),
+			getCustomBiomes: audited("getCustomBiomes", getCustomBiomes),
+			setCustomBiome: audited("setCustomBiome", gmOnly("setCustomBiome", setCustomBiome)),
+			removeCustomBiome: audited("removeCustomBiome", gmOnly("removeCustomBiome", removeCustomBiome)),
+			resetCustomBiomes: audited("resetCustomBiomes", gmOnly("resetCustomBiomes", resetCustomBiomes)),
+			getEnabledBiomeKeys: audited("getEnabledBiomeKeys", getEnabledBiomeKeys),
+			getDisabledBiomes: audited("getDisabledBiomes", getDisabledBiomes),
+			setBiomeEnabled: audited("setBiomeEnabled", gmOnly("setBiomeEnabled", setBiomeEnabled)),
+			openBiomeEditor: audited("openBiomeEditor", openBiomeEditor),
 
 			// --- Hex generator ---
 			generateHexMap: audited("generateHexMap", gmOnly("generateHexMap", generateHexMap)),

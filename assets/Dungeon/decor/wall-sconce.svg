@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <defs>
+    <radialGradient id="flameGlow" cx="50%" cy="38%" r="45%">
+      <stop offset="0%" stop-color="#fff0a8"/>
+      <stop offset="45%" stop-color="#f6a33a"/>
+      <stop offset="100%" stop-color="#9c2f19"/>
+    </radialGradient>
+    <linearGradient id="iron" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#68605a"/>
+      <stop offset="55%" stop-color="#2c2928"/>
+      <stop offset="100%" stop-color="#0f0e0e"/>
+    </linearGradient>
+  </defs>
+  <path d="M30 9c-6 7-9 12-9 17 0 8 6 13 11 13s11-5 11-13c0-7-5-12-7-18-1 6-4 8-6 11 0-4 1-7 0-10z" fill="url(#flameGlow)" stroke="#3b160c" stroke-width="2"/>
+  <path d="M28 28c-3 4-4 7-4 10 0 5 4 8 8 8s8-3 8-8c0-4-2-7-5-11-1 4-3 6-5 8 0-3 0-5-2-7z" fill="#ffd06a" opacity=".9"/>
+  <path d="M18 42h28l-4 8H22z" fill="url(#iron)" stroke="#0d0c0c" stroke-width="2" stroke-linejoin="round"/>
+  <path d="M27 49h10v12H27z" fill="url(#iron)" stroke="#0d0c0c" stroke-width="2"/>
+  <path d="M16 54h32" stroke="#0d0c0c" stroke-width="4" stroke-linecap="round"/>
+  <path d="M22 42c0 8 20 8 20 0" fill="none" stroke="#aaa09a" stroke-width="2" opacity=".4"/>
+</svg>

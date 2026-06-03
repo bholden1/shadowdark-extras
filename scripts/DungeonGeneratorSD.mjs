@@ -8,7 +8,8 @@ const FilePicker = foundry.applications.apps.FilePicker?.implementation ?? globa
 
 import { getSelectedFloorTile, getSelectedWallTile, getSelectedDoorTile, getCurrentElevation, getSceneLevelContext, applySceneLevelData, getDungeonBackground, ensureBackgroundDrawing } from "./DungeonPainterSD.mjs";
 import { generateCaveLayout, buildCaveLoops, buildMixedLoops, generateCurvedWalls, generateCurvedWallVisuals, generateFringeCaves, rotjsLayout } from "./DungeonCaveSD.mjs";
-import { assignBiomes, buildCellFloorMap, placeBiomeProps } from "./DungeonBiomesSD.mjs";
+import { assignBiomes, buildCellFloorMap, placeBiomeProps, getEnabledBiomeKeys } from "./DungeonBiomesSD.mjs";
+import { createDungeonOccupancy, generateDungeonDecor } from "./DungeonDecorSD.mjs";
 
 const ROTJS_STYLES = ["maze", "rogue", "digger", "uniform"];
 
@@ -27,7 +28,7 @@ function sleep(ms) {
 }
 
 function isDocumentLayerReady(type) {
-    const layerName = { Tile: "tiles", Wall: "walls", Drawing: "drawings" }[type];
+    const layerName = { Tile: "tiles", Wall: "walls", Drawing: "drawings", AmbientLight: "lighting" }[type];
     const layer = layerName ? canvas?.[layerName] : null;
     return !!(canvas?.ready && layer?.objects && typeof layer.objects.addChild === "function");
 }
@@ -67,6 +68,8 @@ let _generatorSettings = {
     stairs: 1,
     stairsDown: 1,
     clutter: 0,
+    decorLights: 0,
+    decorTiles: true,
     textured: true,
     wallShadows: false,
     wallColor: "#5C3D3D",
@@ -1061,6 +1064,7 @@ export async function clearSceneAtLevel(scene, levelContext, levelsActive) {
     };
     const isDungeonWall = (w) => w.flags?.[MODULE_ID]?.dungeonGenWall;
     const isDungeonDrawing = (d) => d.flags?.[MODULE_ID]?.dungeonWall;
+    const isDungeonLight = (l) => l.flags?.[MODULE_ID]?.dungeonDecorLight;
 
     const matchesLevel = (doc, type) => {
         // v14 native levels: match by levelId stored in doc.levels collection/array
@@ -1088,6 +1092,10 @@ export async function clearSceneAtLevel(scene, levelContext, levelsActive) {
     // Drawings (wall visuals)
     const drawingIds = scene.drawings.filter(d => isDungeonDrawing(d) && matchesLevel(d, "Drawing")).map(d => d.id);
     if (drawingIds.length > 0) await scene.deleteEmbeddedDocuments("Drawing", drawingIds);
+
+    // Ambient lights (generated decor)
+    const lightIds = scene.lights.filter(l => isDungeonLight(l) && matchesLevel(l, "AmbientLight")).map(l => l.id);
+    if (lightIds.length > 0) await scene.deleteEmbeddedDocuments("AmbientLight", lightIds);
 }
 
 export async function configureScene(scene) {
@@ -1171,6 +1179,8 @@ export async function generateDungeon(config) {
         stairs:    Math.min(Math.max(0, config.stairs ?? 0), 10),
         stairsDown:Math.min(Math.max(0, config.stairsDown ?? 0), 10),
         clutter:   Math.min(Math.max(0, config.clutter ?? 0), 20),
+        decorLights: Math.min(Math.max(0, config.decorLights ?? 0), 4),
+        decorTiles: config.decorTiles ?? true,
         density:   Math.min(Math.max(0, config.density ?? 0.8), 1),
         // string fields: validate or fall back
         wallColor: /^#[0-9a-f]{6}$/i.test(config.wallColor) ? config.wallColor : "#5C3D3D",
@@ -1189,6 +1199,8 @@ export async function generateDungeon(config) {
         stairs = 0,
         stairsDown = 0,
         clutter = 0,
+        decorLights = 0,
+        decorTiles = true,
         useTexture = false,
         wallShadows = false,
         wallColor = "#5C3D3D",
@@ -1338,13 +1350,13 @@ export async function generateDungeon(config) {
             }
         }
 
-        // 6b. Biomes: assign a biome per room, theme floors + props.
-        let biomeMap = null, biomeProps = [], floorResolver = null;
+        // 6b. Biomes: assign a biome per room + theme floors. Props are placed
+        //     later (step 13b) so they share the occupancy map with stairs.
+        let biomeMap = null, floorResolver = null;
         if (useBiomes && layout.roomData?.length) {
-            biomeMap = assignBiomes(layout.roomData, rng);
+            biomeMap = assignBiomes(layout.roomData, rng, getEnabledBiomeKeys());
             const cellFloor = buildCellFloorMap(layout.roomData, biomeMap, layout.floors);
             floorResolver = (gx, gy) => cellFloor.get(`${gx},${gy}`) || floorTexture;
-            biomeProps = await placeBiomeProps(layout.roomData, biomeMap, offset, GRID_SIZE, Math.max(clutter, 2), rng);
         }
 
         // 7. Render floor tiles (per-biome textures when biomes are on)
@@ -1434,6 +1446,7 @@ export async function generateDungeon(config) {
         // 13. Place stairs tiles in random rooms
         const placedStairsUp = [];
         const placedStairsDown = [];
+        const occupancy = createDungeonOccupancy(layout);
         if ((stairs > 0 || stairsDown > 0) && layout.roomData.length > 0) {
             const stairsTiles = [];
             const usedPositions = new Set(); // track "gx,gy" to avoid overlap
@@ -1462,8 +1475,10 @@ export async function generateDungeon(config) {
                         sy = interiorTop + Math.floor(rng() * interiorH);
                         key = `${sx},${sy}`;
                         tries++;
-                    } while (usedPositions.has(key) && tries < 10);
+                    } while ((usedPositions.has(key) || !occupancy.canPlaceRect({ gx: sx, gy: sy, cellsW: 1, cellsH: 1 }, { padding: 0.25, doorPadding: 0.5 })) && tries < 10);
+                    if (usedPositions.has(key) || !occupancy.canPlaceRect({ gx: sx, gy: sy, cellsW: 1, cellsH: 1 }, { padding: 0.25, doorPadding: 0.5 })) continue;
                     usedPositions.add(key);
+                    occupancy.occupyRect({ gx: sx, gy: sy, cellsW: 1, cellsH: 1 }, { padding: 0.25, kind: flagKey });
 
                     const gridX = sx + offset.x;
                     const gridY = sy + offset.y;
@@ -1491,9 +1506,12 @@ export async function generateDungeon(config) {
             }
         }
 
-        // 13b. Biome props (replace generic clutter when biomes are on)
-        if (biomeProps.length > 0) {
-            await createWithElevation("Tile", biomeProps);
+        // 13b. Biome props (replace generic clutter when biomes are on). Placed
+        //      after stairs so they share the occupancy map (avoid doors, stairs,
+        //      and each other), and so later sconces avoid them too.
+        if (useBiomes && biomeMap && layout.roomData?.length) {
+            const biomeProps = await placeBiomeProps(layout.roomData, biomeMap, offset, GRID_SIZE, Math.max(clutter, 2), rng, occupancy);
+            if (biomeProps.length > 0) await createWithElevation("Tile", biomeProps);
         }
 
         // 14. Place clutter tiles in rooms (skipped when biomes provide props)
@@ -1521,8 +1539,6 @@ export async function generateDungeon(config) {
 
                 for (const rd of nonStartRooms) {
                     const room = rd.room;
-                    // Track occupied cells in this room to prevent overlaps
-                    const occupied = new Set();
                     for (let c = 0; c < clutter; c++) {
                         const item = clutterItems[Math.floor(rng() * clutterItems.length)];
                         const cellsW = Math.ceil(item.w / GRID_SIZE);
@@ -1537,22 +1553,12 @@ export async function generateDungeon(config) {
                         do {
                             gx = room.left + Math.floor(rng() * fitW);
                             gy = room.top + Math.floor(rng() * fitH);
-                            overlaps = false;
-                            for (let ox = 0; ox < cellsW && !overlaps; ox++) {
-                                for (let oy = 0; oy < cellsH && !overlaps; oy++) {
-                                    if (occupied.has(`${gx + ox},${gy + oy}`)) overlaps = true;
-                                }
-                            }
+                            overlaps = !occupancy.canPlaceRect({ gx, gy, cellsW, cellsH }, { padding: 0.15, doorPadding: 0.35 });
                             tries++;
                         } while (overlaps && tries < 20);
                         if (overlaps) continue; // couldn't find a free spot, skip
 
-                        // Mark cells as occupied
-                        for (let ox = 0; ox < cellsW; ox++) {
-                            for (let oy = 0; oy < cellsH; oy++) {
-                                occupied.add(`${gx + ox},${gy + oy}`);
-                            }
-                        }
+                        occupancy.occupyRect({ gx, gy, cellsW, cellsH }, { padding: 0.15, kind: "clutter" });
 
                         const pixelX = (gx + offset.x) * GRID_SIZE + (cellsW * GRID_SIZE - item.w) / 2;
                         const pixelY = (gy + offset.y) * GRID_SIZE + (cellsH * GRID_SIZE - item.h) / 2;
@@ -1584,7 +1590,19 @@ export async function generateDungeon(config) {
             }
         }
 
-        // 15. Apply background if one is selected in the painter
+        // 15. Place generated decor lights.
+        const placedDecor = await generateDungeonDecor({
+            layout,
+            rng,
+            offset,
+            gridSize: GRID_SIZE,
+            createDocuments: createWithElevation,
+            lightsPerRoom: decorLights,
+            occupancy,
+            includeTiles: decorTiles,
+        });
+
+        // 16. Apply background if one is selected in the painter
         const bgSetting = getDungeonBackground();
         if (bgSetting && bgSetting !== "none") {
             await ensureBackgroundDrawing(scene, elevation, bgSetting);
@@ -1596,6 +1614,7 @@ export async function generateDungeon(config) {
             stairsUp: placedStairsUp,
             stairsDown: placedStairsDown,
             clutter: placedClutter,
+            decor: placedDecor,
             // ── Room-for-room bridge data (additive; existing callers ignore) ──
             scene,
             layout,

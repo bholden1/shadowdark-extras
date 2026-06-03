@@ -1,4 +1,5 @@
 import { cache } from "./SDXCache.mjs";
+import { buildCaveLoops, generateCurvedWalls, generateCurvedWallVisuals } from "./DungeonCaveSD.mjs";
 /**
  * SDX Dungeon Painter - Room/Dungeon mapping tool
  * Paints floor tiles, auto-generates walls and wall visuals, and supports doors
@@ -118,6 +119,7 @@ let _selectionRect = null;
 let _rebuildTimeout = null;
 let _noFoundryWalls = false; // Toggle to skip creating Foundry wall documents (but keep visuals)
 let _wallShadows = false; // Toggle to apply TokenMagic dropshadow2 to wall drawings
+let _curvedWalls = false; // Toggle: wall painted floors with smoothed/curved (Dyson-style) walls instead of straight
 let _selectedIntWallTile = null; // Selected tile for interior wall placement
 let _selectedIntDoorTile = null; // Selected door tile for interior wall door cutting
 let _backgroundTiles = null;
@@ -538,6 +540,7 @@ export async function getDungeonPainterData() {
         hasDoorTiles: (doorTiles.length > 0),
         noFoundryWalls: _noFoundryWalls,
         wallShadows: _wallShadows,
+        curvedWalls: _curvedWalls,
         backgroundOptions,
         selectedBackground: _selectedBackground,
         canPlayerPaint: canPlayerPaint(),
@@ -636,6 +639,23 @@ export function setWallShadows(value) {
  */
 export function getWallShadows() {
     return _wallShadows;
+}
+
+/**
+ * Set whether painted floors are walled with smoothed/curved walls instead of
+ * straight ones. Triggers a wall rebuild of the current scene so the change
+ * shows immediately.
+ */
+export function setCurvedWalls(value) {
+    _curvedWalls = !!value;
+    if (canvas?.scene) scheduleWallRebuild(canvas.scene);
+}
+
+/**
+ * Get whether curved/organic walls are enabled.
+ */
+export function getCurvedWalls() {
+    return _curvedWalls;
 }
 
 /**
@@ -2006,11 +2026,24 @@ async function rebuildWallsForLevel(scene, levelContext, { wallTilePath = null, 
         let totalWalls = 0;
         let totalDrawings = 0;
 
-        if (!noWalls) {
-            const wallsData = generateWallsWithElevation(floors, entranceSet, gridSize, WALL_THICKNESS, wallHeightBottom, wallHeightTop)
-                .map(w => applySceneLevelData(w, "Wall", levelContext));
+        // Curved/organic mode traces the painted-floor boundary into smoothed
+        // loops and walls those; straight mode walls cell edges (with door gaps).
+        // Note: curved mode walls the whole perimeter, so only INTERIOR doors
+        // stay open (boundary doors get sealed) — same as cave-style generation.
+        const curvedLoops = _curvedWalls
+            ? buildCaveLoops(floors, { x: 0, y: 0 }, gridSize, { isFloor: (k) => floors.has(k) })
+            : null;
 
-            if (existingDoors.length > 0 && WALL_THICKNESS > 0) {
+        if (!noWalls) {
+            const wallsData = (curvedLoops
+                ? generateCurvedWalls(curvedLoops, WALL_THICKNESS).map(w => ({
+                    ...w,
+                    flags: { ...(w.flags || {}), "wall-height": { bottom: wallHeightBottom, top: wallHeightTop } }
+                }))
+                : generateWallsWithElevation(floors, entranceSet, gridSize, WALL_THICKNESS, wallHeightBottom, wallHeightTop)
+            ).map(w => applySceneLevelData(w, "Wall", levelContext));
+
+            if (!curvedLoops && existingDoors.length > 0 && WALL_THICKNESS > 0) {
                 for (const door of existingDoors) {
                     const [px1, py1, px2, py2] = door.c;
 
@@ -2051,8 +2084,10 @@ async function rebuildWallsForLevel(scene, levelContext, { wallTilePath = null, 
             }
         }
 
-        const drawingsData = generateWallVisualsWithElevation(floors, entranceSet, gridSize, WALL_THICKNESS, 0, wallHeightTop)
-            .map(d => applySceneLevelData(d, "Drawing", levelContext));
+        const drawingsData = (curvedLoops
+            ? generateCurvedWallVisuals(curvedLoops, { useTexture: true, wallColor: "#5C3D3D", wallThickness: WALL_THICKNESS, wallTilePath: _selectedWallTile })
+            : generateWallVisualsWithElevation(floors, entranceSet, gridSize, WALL_THICKNESS, 0, wallHeightTop)
+        ).map(d => applySceneLevelData(d, "Drawing", levelContext));
 
         if (drawingsData.length > 0) {
             const chunkSize = 100;

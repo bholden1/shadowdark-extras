@@ -25,7 +25,7 @@ import { PlaceableNotesSD } from "./PlaceableNotesSD.mjs";
 import { setMapDimension, formatActiveScene, enablePainting, disablePainting, toggleTileSelection, clearTileSelection, setSearchFilter, toggleWaterEffect, toggleWindEffect, toggleFogAnimation, toggleTintEnabled, toggleBwEffect, isTintEnabled, setActiveTileTab, setCustomTileDimension, toggleColoredFolderCollapsed, toggleSymbolFolderCollapsed, undoLastPoi, redoLastPoi, canUndoPoi, canRedoPoi, getPoiScale, enablePreview, disablePreview, getActiveTileTab, adjustPoiScale, rotatePoiLeft, rotatePoiRight, togglePoiMirror, getPoiMirror, setDecorSearchFilter, toggleDecorFolderCollapsed, setDecorMode, setDecorElevation, setDecorSort, reloadDecorAssets, registerDecorAsset, appendCustomNavSegment, setCustomNavPath, reloadCustomTiles } from "./HexPainterSD.mjs";
 import { generateHexMap, clearGeneratedTiles } from "./HexGeneratorSD.mjs";
 import { flattenTiles, unflattenTile, getDungeonFloorLevels, getFlattendDungeonLevels, flattenDungeonLevel } from "./TileFlattenSD.mjs";
-import { setDungeonMode, selectFloorTile, selectWallTile, selectDoorTile, selectIntWallTile, selectIntDoorTile, enableDungeonPainting, disableDungeonPainting, setNoFoundryWalls, setWallShadows, setDungeonBackground } from "./DungeonPainterSD.mjs";
+import { setDungeonMode, selectFloorTile, selectWallTile, selectDoorTile, selectIntWallTile, selectIntDoorTile, enableDungeonPainting, disableDungeonPainting, setNoFoundryWalls, setWallShadows, setCurvedWalls, setDungeonBackground } from "./DungeonPainterSD.mjs";
 import { toggleGeneratorPanel, isGeneratorExpanded, generateDungeon, generateRandomSeed, getGeneratorSeed, setGeneratorSeed, getGeneratorSettings, setGeneratorSettings } from "./DungeonGeneratorSD.mjs";
 // Side-effect import: loads the multi-level engine at startup so it can register the standalone
 // mlSliders client setting + the renderTrayApp persistence hook (Levels/Links/Variation/Variety).
@@ -1273,6 +1273,14 @@ export class TrayApp extends HandlebarsApplicationMixin(ApplicationV2) {
             });
         }
 
+        // Dungeon "Curved Walls" toggle (re-walls painted floors with smoothed walls)
+        const curvedWallsCheckbox = elem.querySelector(".dungeon-curved-walls-checkbox");
+        if (curvedWallsCheckbox) {
+            curvedWallsCheckbox.addEventListener("change", (e) => {
+                setCurvedWalls(e.target.checked);
+            });
+        }
+
         // Dungeon "Flatten Level" button
         elem.querySelector(".dungeon-flatten-level-btn")?.addEventListener("click", async (e) => {
             e.preventDefault();
@@ -1455,6 +1463,7 @@ export class TrayApp extends HandlebarsApplicationMixin(ApplicationV2) {
             const stairsVal = parseInt(elem.querySelector(".dgen-stairs")?.value || "0");
             const stairsDownVal = parseInt(elem.querySelector(".dgen-stairsdown")?.value || "0");
             const clutterVal = parseInt(elem.querySelector(".dgen-clutter")?.value || "0");
+            const decorLightsVal = parseInt(elem.querySelector(".dgen-decor-lights")?.value || "0");
             const wColor = elem.querySelector(".dgen-wall-color")?.value || "#5C3D3D";
             const thick = isTextured ? 20 : parseInt(elem.querySelector(".dgen-thickness")?.value || "20");
 
@@ -1465,7 +1474,7 @@ export class TrayApp extends HandlebarsApplicationMixin(ApplicationV2) {
             // Persist settings
             setGeneratorSettings({
                 rooms, density: dens, branching: branch, roomSize: roomSz,
-                symmetry: sym, stairs: stairsVal, stairsDown: stairsDownVal, clutter: clutterVal,
+                symmetry: sym, stairs: stairsVal, stairsDown: stairsDownVal, clutter: clutterVal, decorLights: decorLightsVal,
                 textured: isTextured, wallShadows: isWallShadows, wallColor: wColor, thickness: thick, style, biomes: useBiomes
             });
 
@@ -1479,6 +1488,7 @@ export class TrayApp extends HandlebarsApplicationMixin(ApplicationV2) {
                 stairs: stairsVal,
                 stairsDown: stairsDownVal,
                 clutter: clutterVal,
+                decorLights: decorLightsVal,
                 useTexture: isTextured,
                 wallShadows: isWallShadows,
                 wallColor: wColor,
