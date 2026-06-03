@@ -6527,6 +6527,158 @@ function enhanceInventoryTab(app, html, actor) {
 	});
 }
 
+const HP_QUICK_ADJUST_TOOLTIP = "Left-click: -1 HP | Right-click: +1 HP";
+const hpQuickAdjustments = new Map();
+
+function getActorHpData(actor) {
+	const hp = actor?.system?.attributes?.hp ?? {};
+	return {
+		value: Number(hp.value ?? 0),
+		max: Number(hp.max ?? 0),
+	};
+}
+
+// Read the HP value currently shown in a sheet scope, preferring the enhanced
+// header readout and falling back to the native current-HP input. Returns null
+// if neither is present (caller then skips the optimistic paint).
+function readDisplayedHp($scope) {
+	const $val = $scope.find('.sdx-hp-value').first();
+	if ($val.length) {
+		const n = Number.parseInt($val.text(), 10);
+		if (Number.isFinite(n)) return n;
+	}
+	const $input = $scope.find('[name="system.attributes.hp.value"]').first();
+	if ($input.length) {
+		const n = Number.parseInt($input.val(), 10);
+		if (Number.isFinite(n)) return n;
+	}
+	return null;
+}
+
+// Optimistically paint a new HP value into every HP display in a sheet scope so
+// clicks feel instant. The authoritative actor.update + reconcile render is the
+// backstop, so this only needs to be approximately right.
+function paintHpValue($scope, newValue) {
+	const $val = $scope.find('.sdx-hp-value');
+	if ($val.length) {
+		$val.text(newValue);
+		const max = Number.parseInt($scope.find('.sdx-hp-max').first().text(), 10);
+		if (Number.isFinite(max) && max > 0) {
+			const pct = Math.min(100, Math.max(0, (newValue / max) * 100));
+			const color = pct > 50 ? '#4ade80' : pct > 25 ? '#fbbf24' : '#ef4444';
+			$scope.find('.sdx-hp-bar').css({ width: `${pct}%`, "background-color": color });
+			$scope.find('.hp-wave-container').css("--hp-translate", `${Math.max(0, Math.round(pct) - 15)}%`);
+		}
+	}
+	const $input = $scope.find('[name="system.attributes.hp.value"]');
+	if ($input.length) $input.val(newValue);
+}
+
+// Instant feedback: paint the projected value, then queue the real update.
+// Reading the current value from the DOM (not a render-time closure) lets rapid
+// clicks chain correctly even while updates are suppressing re-renders.
+function applyHpQuickAdjust(actor, delta, $scope) {
+	if (!actor?.isOwner) return;
+	if ($scope && $scope.length) {
+		const cur = readDisplayedHp($scope);
+		if (cur !== null) paintHpValue($scope, Math.max(0, cur + delta));
+	}
+	queueActorHpAdjustment(actor, delta);
+}
+
+async function flushActorHpAdjustment(actorUuid) {
+	const state = hpQuickAdjustments.get(actorUuid);
+	if (!state || state.flushing) return;
+
+	state.flushing = true;
+	try {
+		while (state.delta !== 0) {
+			const delta = state.delta;
+			state.delta = 0;
+			const actor = await fromUuid(actorUuid);
+			if (!actor?.isOwner) break;
+
+			const hp = getActorHpData(actor);
+			const newHp = Math.max(0, hp.value + delta);
+			// render:false keeps rapid clicks smooth: the optimistic DOM paint
+			// (see applyHpQuickAdjust) already shows the new value, and skipping
+			// the per-tick sheet re-render avoids the number visibly jumping
+			// backward to a mid-burst authoritative value. Token bars still
+			// update via the updateActor hook regardless of this flag.
+			await actor.update({ "system.attributes.hp.value": newHp }, { render: false });
+		}
+	} finally {
+		state.flushing = false;
+		if (state.delta !== 0) {
+			// A click landed during the final in-flight update; drain it on the
+			// next tick (no artificial delay — just yields so the update settles).
+			state.timer = window.setTimeout(() => flushActorHpAdjustment(actorUuid), 0);
+		} else {
+			hpQuickAdjustments.delete(actorUuid);
+			// Burst complete: one authoritative re-render reconciles any drift
+			// between the optimistic paint and the stored value (the per-tick
+			// updates above suppressed rendering to stay flicker-free).
+			try {
+				const actor = await fromUuid(actorUuid);
+				if (actor?.sheet?.rendered) actor.sheet.render(false);
+			} catch (_e) { /* sheet closed mid-burst — nothing to reconcile */ }
+		}
+	}
+}
+
+function queueActorHpAdjustment(actor, delta) {
+	if (!actor?.isOwner) return;
+
+	const actorUuid = actor.uuid;
+	const state = hpQuickAdjustments.get(actorUuid) ?? { delta: 0, timer: null, flushing: false };
+	state.delta += delta;
+	hpQuickAdjustments.set(actorUuid, state);
+	// Leading-edge: apply immediately instead of waiting out a debounce window.
+	// The `flushing` flag serializes concurrent flushes and the while-loop in
+	// flushActorHpAdjustment coalesces any clicks that arrive mid-update, so no
+	// click is lost and no 50ms delay is paid before the first HP change lands.
+	flushActorHpAdjustment(actorUuid);
+}
+
+async function setActorHpValue(actor, value) {
+	if (!actor?.isOwner) return;
+	const parsed = Number.parseInt(value, 10);
+	const newHp = Math.max(0, Number.isFinite(parsed) ? parsed : 0);
+	await actor.update({ "system.attributes.hp.value": newHp });
+}
+
+function attachNativeHpQuickControls(app, html, actor) {
+	if (!actor?.isOwner) return;
+
+	const $html = html instanceof jQuery ? html : $(html);
+	const $hpInput = $html.find('[name="system.attributes.hp.value"]').first();
+	if (!$hpInput.length) return;
+
+	$hpInput.prop("disabled", false);
+	$hpInput.attr("data-tooltip", "Current HP");
+
+	const $hpBox = $hpInput.closest('.SD-box');
+	if (!$hpBox.length) return;
+
+	$hpBox.attr("data-tooltip", HP_QUICK_ADJUST_TOOLTIP);
+	$hpBox.css("cursor", "pointer");
+	$hpBox.off("click.sdxQuickHp contextmenu.sdxQuickHp");
+
+	$hpBox.on("click.sdxQuickHp", async (event) => {
+		if ($(event.target).is('input, textarea, select, button, a')) return;
+		event.preventDefault();
+		event.stopPropagation();
+		applyHpQuickAdjust(actor, -1, $html);
+	});
+
+	$hpBox.on("contextmenu.sdxQuickHp", async (event) => {
+		if ($(event.target).is('input, textarea, select, button, a')) return;
+		event.preventDefault();
+		event.stopPropagation();
+		applyHpQuickAdjust(actor, 1, $html);
+	});
+}
+
 // ============================================
 // ENHANCED HEADER
 // ============================================
@@ -6662,7 +6814,7 @@ async function injectEnhancedHeader(app, html, actor) {
 			<div class="sdx-portrait-container">
 				<img class="sdx-portrait" src="${actor.img}" data-edit="img" data-tooltip="${actor.name}" />
 				${hpWavesHtml}
-				<div class="sdx-hp-bar-container" data-tooltip="HP: ${hp.value} / ${hp.max}">
+				<div class="sdx-hp-bar-container" data-tooltip="${HP_QUICK_ADJUST_TOOLTIP}">
 					<div class="sdx-hp-bar" style="width: ${hpPercent}%; background-color: ${hpColor};"></div>
 					<div class="sdx-hp-text">
 						<span class="sdx-hp-value" data-field="hp-value">${hp.value}</span>
@@ -6812,22 +6964,24 @@ async function injectEnhancedHeader(app, html, actor) {
 		}
 	});
 
-	// HP click to edit
-	$enhancedContent.find('.sdx-hp-bar-container').on('click', async (e) => {
+	// HP quick adjust and direct number edit
+	const $sheet = html instanceof jQuery ? html : $(html);
+	const openHpInput = () => {
 		if (!actor.isOwner) return;
-		e.stopPropagation();
 
 		const $hpValue = $enhancedContent.find('.sdx-hp-value');
-		const currentHp = hp.value;
+		if (!$hpValue.length || $enhancedContent.find('.sdx-hp-input').length) return;
+		// Read live: quick-adjust updates use render:false, so the render-time
+		// `hp` closure can be stale by the time the editor is opened.
+		const currentHp = Number(actor.system?.attributes?.hp?.value ?? hp.value);
 
 		// Create inline input
-		const $input = $(`<input type="number" class="sdx-hp-input" value="${currentHp}" min="0" max="${hp.max}" />`);
+		const $input = $(`<input type="number" class="sdx-hp-input" value="${currentHp}" min="0" />`);
 		$hpValue.replaceWith($input);
 		$input.focus().select();
 
 		const saveHp = async () => {
-			const newHp = Math.max(0, Math.min(hp.max, parseInt($input.val()) || 0));
-			await actor.update({ "system.attributes.hp.value": newHp });
+			await setActorHpValue(actor, $input.val());
 		};
 
 		$input.on('blur', saveHp);
@@ -6840,6 +6994,28 @@ async function injectEnhancedHeader(app, html, actor) {
 				$input.blur();
 			}
 		});
+	};
+
+	$enhancedContent.find('.sdx-hp-value').on('click', (e) => {
+		e.preventDefault();
+		e.stopPropagation();
+		openHpInput();
+	});
+
+	$enhancedContent.find('.sdx-hp-bar-container').on('click', async (e) => {
+		if (!actor.isOwner) return;
+		if ($(e.target).is('input, textarea, select, button, a') || $(e.target).closest('.sdx-hp-value').length) return;
+		e.preventDefault();
+		e.stopPropagation();
+		applyHpQuickAdjust(actor, -1, $sheet);
+	});
+
+	$enhancedContent.find('.sdx-hp-bar-container').on('contextmenu', async (e) => {
+		if (!actor.isOwner) return;
+		if ($(e.target).is('input, textarea, select, button, a')) return;
+		e.preventDefault();
+		e.stopPropagation();
+		applyHpQuickAdjust(actor, 1, $sheet);
 	});
 
 	// Luck interaction - toggle or edit based on mode
@@ -9589,6 +9765,7 @@ Hooks.on("renderPlayerSheetSD", async (app, html, data) => {
 	if (app.actor?.type !== "Player") return;
 
 	await injectEnhancedHeader(app, html, app.actor);
+	attachNativeHpQuickControls(app, html, app.actor);
 	enhanceDetailsTab(app, html, app.actor);
 	enhanceAbilitiesTab(app, html, app.actor);
 	injectSkillsBox(html, app.actor);
@@ -9644,6 +9821,7 @@ Hooks.on("renderNpcSheetSD", async (app, html, data) => {
 	if (isPartyActor(app.actor)) return;
 
 	applyNpcPlayerTheme(app, html, app.actor);
+	attachNativeHpQuickControls(app, html, app.actor);
 
 	// Check if NPC inventory is enabled
 	if (!game.settings.get(MODULE_ID, "enableNpcInventory")) return;
@@ -9664,6 +9842,7 @@ Hooks.on("renderNpcSheetSD", (app, html, data) => {
 	if (isPartyActor(app.actor)) return;
 
 	applyNpcPlayerTheme(app, html, app.actor);
+	attachNativeHpQuickControls(app, html, app.actor);
 
 	// Inject the creature type dropdown (before ATTACKS section)
 	injectNpcCreatureType(app, html, app.actor);

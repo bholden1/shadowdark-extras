@@ -4,6 +4,37 @@ All notable changes to this fork of `shadowdark-extras` are documented here.
 
 Format based loosely on [Keep a Changelog](https://keepachangelog.com/).
 
+## [6.10.31] — 2026-06-03 — Interactive HP quick-adjust
+
+Verified live against Foundry 14 / Shadowdark 4.0.6 (world `shadowdark-test`)
+via MCP: single click, a 5-click burst (number steps down with no backward jump
+and exactly one reconciling re-render), clamp at 0, overheal above max, and the
+native NPC HP path were all exercised. The NPC skill-roll styling was confirmed
+by computed-style inspection on a themed sheet.
+
+### Added
+
+- **Quick-adjust HP straight from the sheet.** Left-click the HP bar (enhanced
+  player header) or the HP box (native NPC sheet) to remove 1 HP; right-click to
+  add 1 HP. A tooltip shows the controls and the value can still be typed in
+  directly. Healing past max is allowed; damage clamps at 0.
+- **Current HP stays editable while a sheet is locked.** Only HP max is held by
+  the HP lock, so table-state damage and healing can still be tracked on locked
+  sheets.
+
+### Fixed
+
+- **Rapid HP clicks no longer lag or drop.** Clicks now apply on a leading-edge
+  coalescing queue instead of a trailing 50 ms debounce, so the first click
+  lands immediately and a burst no longer stalls until clicking stops.
+  Optimistic paint plus a render-suppressed update keeps bursts smooth — the
+  number never jumps backward to a mid-burst value — with a single reconciling
+  re-render once the burst settles.
+- **Skill-check request links are readable on themed NPC sheets.** DC / skill
+  roll request chips (`.content-link.skill-roll-request`) now use the same dark
+  chip background, readable text, and gold icon as inline rolls instead of pale
+  link styling.
+
 ## [6.10.30] — 2026-06-03 — NPC sheet theme readability patch
 
 Verified static-only. Live MCP was pointed at a Shadowfoundry install where the

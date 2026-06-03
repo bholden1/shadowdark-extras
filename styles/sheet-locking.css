@@ -67,8 +67,7 @@
     color: #888;
 }
 
-/* HP */
-.sdx-sheet-locked.lock-hp [name="system.attributes.hp.value"],
+/* HP max remains locked; current HP stays editable for table-state damage/healing. */
 .sdx-sheet-locked.lock-hp [name="system.attributes.hp.max"] {
     pointer-events: none;
     color: #888;

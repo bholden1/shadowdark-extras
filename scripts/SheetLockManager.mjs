@@ -275,7 +275,8 @@ export default class SheetLockManager {
             html.find('[name="system.coins.cp"]').prop("disabled", true);
         }
 
-        if (config.hp) html.find('[name="system.attributes.hp.value"], [name="system.attributes.hp.max"]').prop("disabled", true);
+        // HP remains editable while a sheet is locked so table-state damage/healing can be tracked.
+        if (config.hp) html.find('[name="system.attributes.hp.max"]').prop("disabled", true);
         if (config.stats) html.find('.ability-score input').prop("disabled", true);
         if (config.luck) html.find('[name="system.luck.available"]').prop("disabled", true);
     }
@@ -312,7 +313,7 @@ export default class SheetLockManager {
         if (config.xp && "system.level.xp" in flattened) blocked = true;
         if (config.coins && Object.keys(flattened).some(k => k.startsWith("system.coins"))) blocked = true;
         if (config.gems && "system.gems" in flattened) blocked = true;
-        if (config.hp && ("system.attributes.hp.value" in flattened || "system.attributes.hp.max" in flattened)) blocked = true;
+        if (config.hp && "system.attributes.hp.max" in flattened) blocked = true;
         if (config.stats && Object.keys(flattened).some(k => k.match(/system\.abilities\.\w+\.value/))) blocked = true;
         if (config.luck && "system.luck.available" in flattened) blocked = true;
 

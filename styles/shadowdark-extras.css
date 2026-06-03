@@ -5063,7 +5063,8 @@ li.entry.sdx-sidebar-unidentified {
     color: rgba(255, 255, 255, 0.9) !important;
 }
 
-.shadowdark.sheet.npc.sdx-npc-player-theme .inline-roll {
+.shadowdark.sheet.npc.sdx-npc-player-theme .inline-roll,
+.shadowdark.sheet.npc.sdx-npc-player-theme .content-link.skill-roll-request {
     background: rgba(255, 255, 255, 0.16) !important;
     border: 1px solid rgba(255, 255, 255, 0.28) !important;
     border-radius: 3px;
@@ -5072,11 +5073,13 @@ li.entry.sdx-sidebar-unidentified {
     text-shadow: none;
 }
 
-.shadowdark.sheet.npc.sdx-npc-player-theme .inline-roll i {
+.shadowdark.sheet.npc.sdx-npc-player-theme .inline-roll i,
+.shadowdark.sheet.npc.sdx-npc-player-theme .content-link.skill-roll-request i {
     color: rgba(226, 196, 121, 0.95) !important;
 }
 
-.shadowdark.sheet.npc.sdx-npc-player-theme .inline-roll:hover {
+.shadowdark.sheet.npc.sdx-npc-player-theme .inline-roll:hover,
+.shadowdark.sheet.npc.sdx-npc-player-theme .content-link.skill-roll-request:hover {
     background: rgba(226, 196, 121, 0.22) !important;
     border-color: rgba(226, 196, 121, 0.55) !important;
     color: #ffffff !important;
