@@ -27,10 +27,14 @@ import {
     renderFloorTilesWithElevation,
     clearSceneAtLevel,
     configureScene,
+    generateMixedLayout,
 } from "./DungeonGeneratorSD.mjs";
+import { generateCaveLayout, rotjsLayout, buildCaveLoops, buildMixedLoops, generateCurvedWalls, generateCurvedWallVisuals } from "./DungeonCaveSD.mjs";
 import { applySceneLevelData, getSelectedFloorTile, getSelectedWallTile, getSelectedDoorTile } from "./DungeonPainterSD.mjs";
 import { placeChangeLevelRegion } from "./DungeonRegionsSD.mjs";
 import { createDungeonOccupancy, generateDungeonDecor } from "./DungeonDecorSD.mjs";
+
+const ROTJS_STYLES = ["maze", "rogue", "digger", "uniform"];
 
 const MODULE_ID = "shadowdark-extras";
 const GRID_SIZE = 100;
@@ -175,12 +179,16 @@ function carveCorridorTo(floors, tx, ty) {
 /** Shift every coordinate-bearing part of a layout by (dx,dy). */
 function translateLayout(layout, dx, dy) {
     if (dx === 0 && dy === 0) return;
-    const nf = new Set();
-    for (const k of layout.floors) { const [x, y] = k.split(",").map(Number); nf.add(`${x + dx},${y + dy}`); }
-    layout.floors = nf;
-    for (const rd of layout.roomData) { rd.room.x += dx; rd.room.y += dy; }
-    for (const e of layout.entranceEdges) { e.x += dx; e.y += dy; }
-    for (const dp of layout.doorPositions) { dp.x += dx; dp.y += dy; }
+    const shiftSet = (set) => {
+        const out = new Set();
+        for (const k of set) { const [x, y] = k.split(",").map(Number); out.add(`${x + dx},${y + dy}`); }
+        return out;
+    };
+    layout.floors = shiftSet(layout.floors);
+    if (layout._caveCells) layout._caveCells = shiftSet(layout._caveCells); // keep mixed-mode cave tags aligned
+    for (const rd of (layout.roomData || [])) { rd.room.x += dx; rd.room.y += dy; }
+    for (const e of (layout.entranceEdges || [])) { e.x += dx; e.y += dy; }
+    for (const dp of (layout.doorPositions || [])) { dp.x += dx; dp.y += dy; }
 }
 
 /** Move a layout's bounding-box center to the origin, so independent levels become
@@ -408,21 +416,35 @@ async function renderLevel(scene, layout, offset, level, cfg, rng, clutterItems,
     // side is void (a corridor that never got carved). generateWalls omits a wall at every
     // entrance edge, so a dangling one leaves an open gap to the void. Keep only openings
     // with floor on BOTH sides (real door/corridor connections).
-    const connectedEdges = layout.entranceEdges.filter(e => {
+    const connectedEdges = (layout.entranceEdges ?? []).filter(e => {
         const [dx, dy] = DIR_DELTA[e.dir] ?? [0, 0];
         return layout.floors.has(`${e.x},${e.y}`) && layout.floors.has(`${e.x + dx},${e.y + dy}`);
     });
 
-    const walls = generateWalls(layout.floors, offset, connectedEdges, cfg.wallThickness);
+    // Walls: cave/mixed trace the floor boundary into smoothed curved segments;
+    // rooms/rot.js use axis-aligned cell-edge walls (with door gaps).
+    let walls, visuals;
+    if (cfg.style === "mixed") {
+        const mt = Math.max(cfg.wallThickness, 30);
+        const loops = buildMixedLoops(layout.floors, layout._caveCells ?? new Set(), offset, GRID_SIZE);
+        walls = generateCurvedWalls(loops, mt);
+        visuals = generateCurvedWallVisuals(loops, { useTexture: cfg.useTexture, wallColor: cfg.wallColor, wallThickness: mt, wallTilePath: cfg.wallTilePath });
+    } else if (cfg.style === "cave") {
+        const ct = Math.max(cfg.wallThickness, 45);
+        const loops = buildCaveLoops(layout.floors, offset, GRID_SIZE);
+        walls = generateCurvedWalls(loops, ct);
+        visuals = generateCurvedWallVisuals(loops, { useTexture: cfg.useTexture, wallColor: cfg.wallColor, wallThickness: ct, wallTilePath: cfg.wallTilePath });
+    } else {
+        walls = generateWalls(layout.floors, offset, connectedEdges, cfg.wallThickness);
+        visuals = generateWallVisuals(layout.floors, offset, {
+            useTexture: cfg.useTexture,
+            wallColor: cfg.wallColor,
+            wallThickness: cfg.wallThickness,
+            wallTilePath: cfg.wallTilePath,
+        }, connectedEdges);
+    }
     const doors = generateDoors(layout.doorPositions, offset, cfg.wallThickness, cfg.doorTilePath);
     await cwe("Wall", [...walls, ...doors]);
-
-    const visuals = generateWallVisuals(layout.floors, offset, {
-        useTexture: cfg.useTexture,
-        wallColor: cfg.wallColor,
-        wallThickness: cfg.wallThickness,
-        wallTilePath: cfg.wallTilePath,
-    }, connectedEdges);
     await cwe("Drawing", visuals);
 
     await renderClutter(scene, layout, rng, offset, cfg.clutter, clutterItems, cwe, occupancy);
@@ -539,6 +561,7 @@ export async function generateMultiLevelDungeon(config = {}) {
         branching: config.branching ?? 0.5,
         roomSizeBias: config.roomSizeBias ?? 0.5,
         symmetry: config.symmetry ?? false,
+        style: typeof config.style === "string" ? config.style : "rooms",
         // Per-level "grand halls vs tight crypts" variation strength (0 = uniform levels).
         // Only applies to independent layouts (sharedFootprint:false); shared footprints
         // are identical by design. See levelLayoutParams.
@@ -570,24 +593,36 @@ export async function generateMultiLevelDungeon(config = {}) {
         //    stairs sit in rooms on every level with no carving; per-level variation does
         //    not apply there.
         const entranceIdx = clamp(Math.round(cfg.entranceIndex), 0, cfg.levelCount - 1);
+        // Build one level's layout in the selected style. Cave/mixed/rot.js reuse
+        // the same generators the single-level path uses; rooms is the default.
+        const ROTJS = ROTJS_STYLES.includes(cfg.style);
+        const buildLayout = async (params, seedStr) => {
+            const rng = seedrandom(seedStr);
+            if (cfg.style === "cave") return generateCaveLayout({ roomCount: params.roomCount, density: params.density }, rng);
+            if (cfg.style === "mixed") return generateMixedLayout(params, rng);
+            if (ROTJS) return await rotjsLayout(cfg.style, { roomCount: params.roomCount, density: params.density }, seedStr);
+            return generateLayout(params, rng);
+        };
+
         const layouts = [];
         if (cfg.sharedFootprint) {
-            const base = generateLayout({
+            const base = await buildLayout({
                 roomCount: cfg.roomCount, density: cfg.density, linearity: 1 - cfg.branching,
                 roomSizeBias: cfg.roomSizeBias, symmetry: cfg.symmetry,
-            }, seedrandom(`${cfg.seed}:base`));
+            }, `${cfg.seed}:base`);
             for (let i = 0; i < cfg.levelCount; i++) {
                 layouts.push({
                     floors: new Set(base.floors),       // own copy (anchor stamping is per-level)
                     roomData: base.roomData,            // read-only downstream
                     entranceEdges: base.entranceEdges,
                     doorPositions: base.doorPositions,
+                    _caveCells: base._caveCells ? new Set(base._caveCells) : undefined, // mixed-mode tags
                 });
             }
         } else {
             for (let i = 0; i < cfg.levelCount; i++) {
                 const lp = levelLayoutParams(cfg, i, cfg.levelCount, entranceIdx, cfg.variation, cfg.seed);
-                const lay = generateLayout(lp, seedrandom(`${cfg.seed}:L${i}`));
+                const lay = await buildLayout(lp, `${cfg.seed}:L${i}`);
                 centerLayout(lay); // concentric footprints → overlap (shared stairs) without sprawl
                 layouts.push(lay);
             }
