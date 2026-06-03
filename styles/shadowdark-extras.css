@@ -4960,6 +4960,134 @@ li.entry.sdx-sidebar-unidentified {
     color: #ffffff !important;
 }
 
+/* NPC sheets can opt into the same visual shell as player sheets while
+   preserving the system's native NPC layout and controls. */
+.shadowdark.sheet.npc.sdx-npc-player-theme {
+    min-width: 590px;
+    background: var(--sdx-border-background-color, black) !important;
+    background-clip: border-box !important;
+    background-origin: border-box !important;
+    border: var(--sdx-border-width) solid transparent !important;
+    border-image: var(--sdx-sheet-border) var(--sdx-border-image-slice) fill !important;
+    border-image-repeat: var(--sdx-border-image-repeat, stretch) !important;
+    border-image-width: var(--sdx-border-image-width) !important;
+    border-image-outset: var(--sdx-border-image-outset, 0px) !important;
+    color: rgba(255, 255, 255, 0.9);
+}
+
+.shadowdark.sheet.npc.sdx-npc-player-theme .window-content,
+.shadowdark.sheet.npc.sdx-npc-player-theme form {
+    background: var(--sdx-border-background-color, black) !important;
+    color: rgba(255, 255, 255, 0.9);
+}
+
+.shadowdark.sheet.npc.sdx-npc-player-theme .SD-header {
+    margin: 0 !important;
+    background-color: var(--sdx-sheet-header-bg, black) !important;
+    border-bottom: 1px solid var(--sdx-nav-border-color, rgba(255, 255, 255, 0.25));
+}
+
+.shadowdark.sheet.npc.sdx-npc-player-theme .SD-header input,
+.shadowdark.sheet.npc.sdx-npc-player-theme .SD-header h1,
+.shadowdark.sheet.npc.sdx-npc-player-theme .SD-header h2,
+.shadowdark.sheet.npc.sdx-npc-player-theme .SD-header .name {
+    color: var(--sdx-actor-name-color, #ffffff) !important;
+    text-shadow: var(--sdx-actor-name-shadow, 1px 1px 3px rgba(0, 0, 0, 0.8));
+}
+
+.shadowdark.sheet.npc.sdx-npc-player-theme .SD-nav {
+    margin: 0 !important;
+    background: var(--sdx-nav-bg, black);
+    border-bottom-color: var(--sdx-nav-border-color, rgba(255, 255, 255, 0.35)) !important;
+}
+
+.shadowdark.sheet.npc.sdx-npc-player-theme .SD-nav a {
+    margin: 0 !important;
+    color: var(--sdx-nav-link-color, #ffffff) !important;
+}
+
+.shadowdark.sheet.npc.sdx-npc-player-theme .SD-nav a.active {
+    color: var(--sdx-nav-link-active-color, #ffffff) !important;
+}
+
+.shadowdark.sheet.npc.sdx-npc-player-theme .SD-content-body,
+.shadowdark.sheet.npc.sdx-npc-player-theme .tab.active {
+    background: linear-gradient(180deg, var(--sdx-tab-gradient-start, #000000) 0%, var(--sdx-tab-gradient-end, #2f2b2b) 100%) !important;
+    color: rgba(255, 255, 255, 0.9);
+}
+
+.shadowdark.sheet.npc.sdx-npc-player-theme .SD-box {
+    background: rgba(0, 0, 0, 0.42) !important;
+    border: var(--sdx-box-border-width, 8px) solid transparent !important;
+    border-image: var(--sdx-box-border) var(--sdx-box-border-image-slice, 40) fill !important;
+    border-image-repeat: stretch !important;
+    border-image-width: var(--sdx-box-border-image-width, 40px) !important;
+    color: rgba(255, 255, 255, 0.9);
+}
+
+.shadowdark.sheet.npc.sdx-npc-player-theme .SD-box .header,
+.shadowdark.sheet.npc.sdx-npc-player-theme .SD-box > .header,
+.shadowdark.sheet.npc.sdx-npc-player-theme .SD-banner {
+    background: rgba(0, 0, 0, 0.8) !important;
+    color: rgba(255, 255, 255, 0.95) !important;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.18);
+}
+
+.shadowdark.sheet.npc.sdx-npc-player-theme .SD-box .header {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.shadowdark.sheet.npc.sdx-npc-player-theme .SD-box .header span:empty {
+    display: none;
+}
+
+.shadowdark.sheet.npc.sdx-npc-player-theme .SD-box .header label {
+    flex: 1 1 auto;
+    min-width: 0;
+    overflow: visible;
+    text-overflow: clip;
+    white-space: nowrap;
+}
+
+.shadowdark.sheet.npc.sdx-npc-player-theme .SD-box:has(.content.centered.larger) .header label {
+    font-size: 14px !important;
+}
+
+.shadowdark.sheet.npc.sdx-npc-player-theme .SD-box .content,
+.shadowdark.sheet.npc.sdx-npc-player-theme .SD-box .content label,
+.shadowdark.sheet.npc.sdx-npc-player-theme .SD-box .content span,
+.shadowdark.sheet.npc.sdx-npc-player-theme .SD-list .item,
+.shadowdark.sheet.npc.sdx-npc-player-theme .SD-list .header {
+    color: rgba(255, 255, 255, 0.9) !important;
+}
+
+.shadowdark.sheet.npc.sdx-npc-player-theme input,
+.shadowdark.sheet.npc.sdx-npc-player-theme select,
+.shadowdark.sheet.npc.sdx-npc-player-theme textarea {
+    background: rgba(255, 255, 255, 0.12) !important;
+    border: 1px solid rgba(255, 255, 255, 0.22) !important;
+    color: rgba(255, 255, 255, 0.95) !important;
+}
+
+.shadowdark.sheet.npc.sdx-npc-player-theme select option {
+    background: #1f1a1f;
+    color: rgba(255, 255, 255, 0.95);
+}
+
+.shadowdark.sheet.npc.sdx-npc-player-theme a,
+.shadowdark.sheet.npc.sdx-npc-player-theme button,
+.shadowdark.sheet.npc.sdx-npc-player-theme .item-control {
+    color: rgba(255, 255, 255, 0.92) !important;
+}
+
+.shadowdark.sheet.npc.sdx-npc-player-theme a:hover,
+.shadowdark.sheet.npc.sdx-npc-player-theme button:hover,
+.shadowdark.sheet.npc.sdx-npc-player-theme .item-control:hover {
+    color: var(--sdx-nav-link-active-color, #ffffff) !important;
+}
+
 /* When SD-header has enhanced header class, set up layout */
 .shadowdark.sheet.player .SD-header.sdx-enhanced-header {
     position: relative;

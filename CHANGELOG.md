@@ -4,6 +4,25 @@ All notable changes to this fork of `shadowdark-extras` are documented here.
 
 Format based loosely on [Keep a Changelog](https://keepachangelog.com/).
 
+## [6.10.29] — 2026-06-03 — NPC sheet player theme styling
+
+Verified live against Foundry 14.363 / Shadowdark 4.0.6.
+
+### Added
+
+- **NPC actor sheets can now use the Shadowdark Extras player-sheet theme.**
+  The new **Match NPC Sheet Theme to Player Sheets** world setting applies the
+  configured player-sheet frame, header, tab, content, panel, input, and control
+  styling to NPC sheets while preserving the native NPC layout.
+- **Floating Disk token art** is now included at
+  `assets/floating_disk.Token.webp`.
+
+### Fixed
+
+- **Compact NPC stat headers fit the themed frame.** The AC/Level style boxes now
+  hide empty header spans and use a slightly smaller compact label size so
+  labels such as **Level** no longer truncate.
+
 ## [6.10.28] — 2026-06-03 — NPC sheet summon hotfix
 
 Verified live against Foundry 14.363 / Shadowdark 4.0.6.

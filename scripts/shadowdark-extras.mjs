@@ -3176,6 +3176,21 @@ function registerSettings() {
 		requiresReload: true,
 	});
 
+	game.settings.register(MODULE_ID, "enableNpcPlayerTheme", {
+		name: game.i18n.localize("SHADOWDARK_EXTRAS.settings.enable_npc_player_theme.name"),
+		hint: game.i18n.localize("SHADOWDARK_EXTRAS.settings.enable_npc_player_theme.hint"),
+		scope: "world",
+		config: true,
+		default: true,
+		type: Boolean,
+		requiresReload: false,
+		onChange: () => {
+			for (const app of Object.values(ui.windows ?? {})) {
+				if (app.actor?.type === "NPC") app.render(false);
+			}
+		},
+	});
+
 	game.settings.register(MODULE_ID, "enableDefaultHeaderBg", {
 		name: game.i18n.localize("SHADOWDARK_EXTRAS.settings.enable_default_header_bg.name"),
 		hint: game.i18n.localize("SHADOWDARK_EXTRAS.settings.enable_default_header_bg.hint"),
@@ -9599,12 +9614,36 @@ Hooks.on("renderPlayerSheetSD", async (app, html, data) => {
 	enableItemChatIcon(app, html);
 });
 
+function applyNpcPlayerTheme(app, html, actor) {
+	if (actor?.type !== "NPC") return;
+	if (isPartyActor(actor)) return;
+
+	const $html = html instanceof jQuery ? html : $(html);
+	const $sheet = $html.closest('.shadowdark.sheet.npc').length
+		? $html.closest('.shadowdark.sheet.npc')
+		: $html;
+
+	if (!game.settings.get(MODULE_ID, "enableNpcPlayerTheme")) {
+		$sheet.removeClass('sdx-npc-player-theme');
+		$html.find('.SD-header').first().removeClass('sdx-npc-themed-header');
+		$html.find('.SD-content-body').first().removeClass('sdx-npc-themed-content');
+		return;
+	}
+
+	$sheet.addClass('sdx-npc-player-theme');
+
+	$html.find('.SD-header').first().addClass('sdx-npc-themed-header');
+	$html.find('.SD-content-body').first().addClass('sdx-npc-themed-content');
+}
+
 // Inject Inventory tab into NPC sheets (but not Party sheets)
 Hooks.on("renderNpcSheetSD", async (app, html, data) => {
 	if (app.actor?.type !== "NPC") return;
 
 	// Don't inject into Party actors (they have their own inventory)
 	if (isPartyActor(app.actor)) return;
+
+	applyNpcPlayerTheme(app, html, app.actor);
 
 	// Check if NPC inventory is enabled
 	if (!game.settings.get(MODULE_ID, "enableNpcInventory")) return;
@@ -9623,6 +9662,8 @@ Hooks.on("renderNpcSheetSD", (app, html, data) => {
 
 	// Don't inject into Party actors
 	if (isPartyActor(app.actor)) return;
+
+	applyNpcPlayerTheme(app, html, app.actor);
 
 	// Inject the creature type dropdown (before ATTACKS section)
 	injectNpcCreatureType(app, html, app.actor);
