@@ -4,6 +4,22 @@ All notable changes to this fork of `shadowdark-extras` are documented here.
 
 Format based loosely on [Keep a Changelog](https://keepachangelog.com/).
 
+## [6.10.33] — 2026-06-04 — Hex flatten alignment fix
+
+Verified live against Foundry 14.363 / Shadowdark 4.0.6 via MCP.
+
+### Fixed
+
+- **Flattened tiles no longer shift up-left (most visible on hex maps).**
+  `createFlattenedTile` and `flattenDungeonLevel` created the baked tile with no
+  texture anchor, so v14's default (0.5, 0.5) treated the top-left bake origin as
+  the tile centre — rendering the flattened image offset by half its size, so only
+  its bottom-right quadrant landed inside the scene. Now pinned to
+  `anchorX/anchorY: 0` to match the hex tile placers. (Verified live: a flattened
+  4172×4736 tile reported rendered bounds of `(-2086, -2368)` under the default
+  anchor; pinning the anchor to 0 snapped it back to `(0, 0)` and the full map
+  filled the scene rect.)
+
 ## [6.10.32] — 2026-06-03 — v14 alignment & unidentified-name fixes
 
 Verified live against Foundry 14.363 / Shadowdark 4.0.6 via MCP.

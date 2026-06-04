@@ -496,7 +496,16 @@ async function createFlattenedTile(bounds, filePath, tiles) {
     });
 
     const tileData = {
-        texture: { src: filePath },
+        texture: {
+            src: filePath,
+            // v14 defaults the texture anchor to (0.5, 0.5), treating (x, y) as the
+            // tile centre. bounds.x/y are a top-left origin, so pin the anchor to
+            // (0, 0) — otherwise the flattened tile renders half its size up-left of
+            // where the originals sat (most visible on hex maps). Matches the hex
+            // tile placers (HexPainterSD / HexGeneratorSD / SoloHexMode).
+            anchorX: 0,
+            anchorY: 0
+        },
         x: bounds.x,
         y: bounds.y,
         width: bounds.width,
@@ -858,7 +867,14 @@ export async function flattenDungeonLevel(elevation, options = {}) {
         const originalDrawings = drawings.map(d => ({ data: d.toObject(false) }));
 
         const tileData = {
-            texture: { src: filePath },
+            texture: {
+                src: filePath,
+                // v14 anchors textures at (0.5, 0.5) by default, treating (x, y) as
+                // the centre. cropped.bounds.x/y are top-left, so pin anchor to (0, 0)
+                // or the baked level renders half its size up-left of the originals.
+                anchorX: 0,
+                anchorY: 0
+            },
             x: cropped.bounds.x,
             y: cropped.bounds.y,
             width: cropped.bounds.width,
