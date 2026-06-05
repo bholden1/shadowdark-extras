@@ -61,6 +61,11 @@ flags:
       perTurnTrigger: start
       perTurnDamage: ''
       reapplyEffects: false
+      targetDefense:
+        enabled: true
+        ability: cha
+        dc: '@spellcastingCheck'
+        successAction: avoid
     summoning:
       enabled: false
       profiles: '[]'
@@ -95,7 +100,7 @@ flags:
         type: ''
       save:
         enabled: false
-        dc: '12'
+        dc: 12
         ability: dex
         halfOnSuccess: true
       applyConfiguredEffects: false

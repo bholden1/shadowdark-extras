@@ -13076,6 +13076,44 @@ section[data-tab="tab-notes"].sdx-journal-active>div:not(.sdx-journal-notes) {
     font-size: 14px;
 }
 
+.sdx-target-defense {
+    margin-top: 8px;
+    padding: 6px 8px;
+    background: rgba(0, 0, 0, 0.22);
+    border: 1px solid #3a3a3a;
+    border-radius: 4px;
+}
+
+.sdx-target-defense-info {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    color: #d8d8d8;
+    font-size: 12px;
+}
+
+.sdx-target-defense-status {
+    margin-left: auto;
+    font-weight: bold;
+}
+
+.sdx-target-defense-roll {
+    width: 100%;
+    margin-top: 6px;
+    background: #263852 !important;
+    color: #f0f4ff !important;
+    border: 1px solid #3d587c !important;
+    border-radius: 3px !important;
+    padding: 5px 8px !important;
+    cursor: pointer;
+    font-weight: bold;
+}
+
+.sdx-target-defense-roll:hover {
+    background: #304668 !important;
+    border-color: #52709b !important;
+}
+
 /* Multiplier buttons */
 .sdx-multipliers {
     display: flex;

@@ -244,6 +244,14 @@ export default class NPCFeatureSheetSD extends HandlebarsApplicationMixin(Docume
                 dc: flags.spellDamage?.challenge?.dc ?? ""
             },
 
+            // Target Defense Mode
+            targetDefense: {
+                enabled: flags.spellDamage?.targetDefense?.enabled ?? false,
+                ability: flags.spellDamage?.targetDefense?.ability ?? "dex",
+                dc: flags.spellDamage?.targetDefense?.dc ?? "12",
+                successAction: flags.spellDamage?.targetDefense?.successAction ?? "avoid"
+            },
+
             // Effects Challenge Mode
             effectsChallenge: {
                 enabled: flags.spellDamage?.effectsChallenge?.enabled ?? false,
@@ -372,6 +380,7 @@ export default class NPCFeatureSheetSD extends HandlebarsApplicationMixin(Docume
 
         // Toggle visibility of damage content based on checkbox
         this._setupToggleSections(html);
+        this._setupChallengeToggles(html);
 
         // Setup formula type radio buttons
         this._setupFormulaTypeRadios(html);
@@ -612,6 +621,23 @@ export default class NPCFeatureSheetSD extends HandlebarsApplicationMixin(Docume
                     content.style.display = toggle.checked ? "block" : "none";
                 }
             });
+        });
+    }
+
+    /**
+     * Keep secondary challenge/defense settings visible while the checkbox is on.
+     */
+    _setupChallengeToggles(html) {
+        const challengeToggle = html.querySelector('input[name="flags.shadowdark-extras.spellDamage.challenge.enabled"]');
+        const challengeSettings = html.querySelector(".challenge-settings");
+        challengeToggle?.addEventListener("change", () => {
+            if (challengeSettings) challengeSettings.style.display = challengeToggle.checked ? "" : "none";
+        });
+
+        const defenseToggle = html.querySelector('input[name="flags.shadowdark-extras.spellDamage.targetDefense.enabled"]');
+        const defenseSettings = html.querySelector(".target-defense-settings");
+        defenseToggle?.addEventListener("change", () => {
+            if (defenseSettings) defenseSettings.style.display = defenseToggle.checked ? "" : "none";
         });
     }
 

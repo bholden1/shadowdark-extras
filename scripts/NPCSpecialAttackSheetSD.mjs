@@ -126,6 +126,16 @@ export default class NPCSpecialAttackSheetSD extends NPCFeatureSheetSD {
 
         // Base Damage Type (flag)
         context.baseDamageType = item.getFlag(MODULE_ID, "baseDamageType") || "physical";
+        const specialAttack = item.getFlag(MODULE_ID, "specialAttack") || {};
+        context.specialAttack = {
+            damageFormula: specialAttack.damageFormula || item.system.damage?.value || "",
+            damageBonus: specialAttack.damageBonus ?? item.system.bonuses?.damageBonus ?? 0,
+            critical: {
+                multiplier: specialAttack.critical?.multiplier ?? item.system.bonuses?.critical?.multiplier ?? 2,
+                successThreshold: specialAttack.critical?.successThreshold ?? item.system.bonuses?.critical?.successThreshold ?? 20,
+                failureThreshold: specialAttack.critical?.failureThreshold ?? item.system.bonuses?.critical?.failureThreshold ?? 1
+            }
+        };
 
         return context;
     }
@@ -220,23 +230,31 @@ export default class NPCSpecialAttackSheetSD extends NPCFeatureSheetSD {
         const statFields = [
             { selector: "input[name='system.attack.num']", path: "system.attack.num" },
             { selector: "input[name='system.bonuses.attackBonus']", path: "system.bonuses.attackBonus", isNumber: true },
-            { selector: "input[name='system.bonuses.damageBonus']", path: "system.bonuses.damageBonus", isNumber: true },
-            { selector: "input[name='system.damage.value']", path: "system.damage.value" },
-            { selector: "input[name='system.bonuses.critical.multiplier']", path: "system.bonuses.critical.multiplier", isNumber: true },
-            { selector: "input[name='system.bonuses.critical.successThreshold']", path: "system.bonuses.critical.successThreshold", isNumber: true },
-            { selector: "input[name='system.bonuses.critical.failureThreshold']", path: "system.bonuses.critical.failureThreshold", isNumber: true }
+            { selector: "input[name='flags.shadowdark-extras.specialAttack.damageBonus']", flagPath: "damageBonus", isNumber: true },
+            { selector: "input[name='flags.shadowdark-extras.specialAttack.damageFormula']", flagPath: "damageFormula" },
+            { selector: "input[name='flags.shadowdark-extras.specialAttack.critical.multiplier']", flagPath: "critical.multiplier", isNumber: true },
+            { selector: "input[name='flags.shadowdark-extras.specialAttack.critical.successThreshold']", flagPath: "critical.successThreshold", isNumber: true },
+            { selector: "input[name='flags.shadowdark-extras.specialAttack.critical.failureThreshold']", flagPath: "critical.failureThreshold", isNumber: true }
         ];
 
         for (const field of statFields) {
             const input = html.querySelector(field.selector);
             if (input) {
-                input.addEventListener("change", async (event) => {
+                const save = async (event) => {
                     let value = event.target.value;
                     if (field.isNumber) {
                         value = parseInt(value) || 0;
                     }
-                    await this.item.update({ [field.path]: value });
-                });
+                    if (field.flagPath) {
+                        const specialAttack = foundry.utils.deepClone(this.item.getFlag(MODULE_ID, "specialAttack") || {});
+                        foundry.utils.setProperty(specialAttack, field.flagPath, value);
+                        await this.item.setFlag(MODULE_ID, "specialAttack", specialAttack);
+                    } else {
+                        await this.item.update({ [field.path]: value });
+                    }
+                };
+                input.addEventListener("change", save);
+                input.addEventListener("blur", save);
             }
         }
     }

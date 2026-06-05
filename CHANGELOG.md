@@ -4,6 +4,42 @@ All notable changes to this fork of `shadowdark-extras` are documented here.
 
 Format based loosely on [Keep a Changelog](https://keepachangelog.com/).
 
+## [6.10.34] — 2026-06-05 — NPC & spell Target Defense saves
+
+Verified live against Foundry 14.363 / Shadowdark 4.0.6 via MCP.
+
+### Added
+
+- **Target Defense saves for NPC Features, NPC Special Attacks, and configured
+  Spell / Scroll / Wand damage cards.** A new *Target Defense* section on the NPC
+  Feature and NPC Special Attack sheets lets an attack be resisted by a target
+  ability check. Each targeted token gets a **Roll [Ability]** button on the
+  damage card; the check is rolled against a DC that can be a flat number or a
+  formula (`12`, `@level + 10`, `@target.ac`, `@spellcastingCheck`). On success
+  the target either **avoids** the attack outright or takes **half damage**,
+  configurable per item. Per-target results persist on the chat message and
+  auto-apply is blocked until every pending defense is resolved. (Verified live:
+  casting Turn Undead at a skeleton rolled its CHA vs a resolved
+  `@spellcastingCheck` DC of 8 — a forced 19 avoided the effect, a forced 0 did
+  not, and a successful avoid skipped the condition.)
+- **Turn Undead now scales its save with the caster.** Its Target Defense is a
+  Charisma check vs `@spellcastingCheck` (the cast roll), avoided on success —
+  undead that beat the caster's roll shrug off the turn.
+
+### Fixed
+
+- **NPC Special Attack damage & critical settings persist again.** SD 4.x strips
+  the ad-hoc `system.damage` / `system.bonuses` paths from the NPC Special Attack
+  item type, so those fields silently reset. Damage formula, damage bonus, and
+  critical thresholds now save under `flags.shadowdark-extras.specialAttack`
+  (with fallback reads from the old paths for older items).
+- **NPC Special Attacks with no damage formula still render their card.** A
+  configured-but-damageless special attack (e.g. condition- or defense-only) no
+  longer bails before the damage card is built.
+- **Target-defense rolls no longer hang on "Rolling".** Result saving is
+  decoupled from the Dice So Nice animation, so the button resolves immediately
+  even when 3D dice are enabled.
+
 ## [6.10.33] — 2026-06-04 — Hex flatten alignment fix
 
 Verified live against Foundry 14.363 / Shadowdark 4.0.6 via MCP.

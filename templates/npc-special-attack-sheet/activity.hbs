@@ -18,7 +18,7 @@
 
             <div class="form-group">
                 <label>Damage Bonus</label>
-                <input type="number" name="system.bonuses.damageBonus" value="{{system.bonuses.damageBonus}}"
+                <input type="number" name="flags.shadowdark-extras.specialAttack.damageBonus" value="{{specialAttack.damageBonus}}"
                     placeholder="0" />
             </div>
         </div>
@@ -30,7 +30,7 @@
         <div class="base-damage-grid">
             <div class="form-group full-width">
                 <label>Damage Formula</label>
-                <input type="text" name="system.damage.value" value="{{system.damage.value}}" placeholder="1d6" />
+                <input type="text" name="flags.shadowdark-extras.specialAttack.damageFormula" value="{{specialAttack.damageFormula}}" placeholder="1d6" />
             </div>
 
             <div class="form-group full-width">
@@ -95,20 +95,20 @@
         <div class="critical-grid">
             <div class="form-group">
                 <label>Critical Multiplier</label>
-                <input type="number" name="system.bonuses.critical.multiplier"
-                    value="{{system.bonuses.critical.multiplier}}" min="1" placeholder="2" />
+                <input type="number" name="flags.shadowdark-extras.specialAttack.critical.multiplier"
+                    value="{{specialAttack.critical.multiplier}}" min="1" placeholder="2" />
             </div>
 
             <div class="form-group">
                 <label>Critical Success</label>
-                <input type="number" name="system.bonuses.critical.successThreshold"
-                    value="{{system.bonuses.critical.successThreshold}}" min="1" max="20" placeholder="20" />
+                <input type="number" name="flags.shadowdark-extras.specialAttack.critical.successThreshold"
+                    value="{{specialAttack.critical.successThreshold}}" min="1" max="20" placeholder="20" />
             </div>
 
             <div class="form-group">
                 <label>Critical Failure</label>
-                <input type="number" name="system.bonuses.critical.failureThreshold"
-                    value="{{system.bonuses.critical.failureThreshold}}" min="1" max="20" placeholder="1" />
+                <input type="number" name="flags.shadowdark-extras.specialAttack.critical.failureThreshold"
+                    value="{{specialAttack.critical.failureThreshold}}" min="1" max="20" placeholder="1" />
             </div>
         </div>
     </fieldset>
@@ -123,6 +123,51 @@
                 <span>{{localize label}}</span>
             </label>
             {{/each}}
+        </div>
+    </fieldset>
+
+    {{!-- Target Defense Section --}}
+    <fieldset class="potion-fieldset">
+        <legend><i class="fas fa-shield-halved"></i> Target Defense</legend>
+        <div class="form-group">
+            <label class="checkbox-label" style="font-weight: bold;">
+                <input type="checkbox" name="flags.shadowdark-extras.spellDamage.targetDefense.enabled" {{#if
+                    sdxFlags.targetDefense.enabled}}checked{{/if}} />
+                <span>Use target ability check instead of attack roll result</span>
+            </label>
+        </div>
+        <div class="target-defense-settings" {{#unless sdxFlags.targetDefense.enabled}}style="display: none"
+            {{/unless}}>
+            <div class="dice-formula-grid">
+                <div class="form-group">
+                    <label>Ability</label>
+                    <select name="flags.shadowdark-extras.spellDamage.targetDefense.ability">
+                        <option value="str" {{#if (eq sdxFlags.targetDefense.ability "str" )}}selected{{/if}}>STR</option>
+                        <option value="dex" {{#if (eq sdxFlags.targetDefense.ability "dex" )}}selected{{/if}}>DEX</option>
+                        <option value="con" {{#if (eq sdxFlags.targetDefense.ability "con" )}}selected{{/if}}>CON</option>
+                        <option value="int" {{#if (eq sdxFlags.targetDefense.ability "int" )}}selected{{/if}}>INT</option>
+                        <option value="wis" {{#if (eq sdxFlags.targetDefense.ability "wis" )}}selected{{/if}}>WIS</option>
+                        <option value="cha" {{#if (eq sdxFlags.targetDefense.ability "cha" )}}selected{{/if}}>CHA</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>DC <i class="fas fa-question-circle"
+                            data-tooltip="Target check DC. Supports formulas like 12, @level + 10, @target.ac, or @spellcastingCheck."></i></label>
+                    <input type="text" name="flags.shadowdark-extras.spellDamage.targetDefense.dc"
+                        value="{{sdxFlags.targetDefense.dc}}" placeholder="12" />
+                </div>
+            </div>
+            <div class="form-group">
+                <label>On Success</label>
+                <select name="flags.shadowdark-extras.spellDamage.targetDefense.successAction">
+                    <option value="avoid" {{#if (eq sdxFlags.targetDefense.successAction "avoid" )}}selected{{/if}}>
+                        Avoid attack
+                    </option>
+                    <option value="half" {{#if (eq sdxFlags.targetDefense.successAction "half" )}}selected{{/if}}>
+                        Half damage
+                    </option>
+                </select>
+            </div>
         </div>
     </fieldset>
 
