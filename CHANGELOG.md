@@ -4,6 +4,24 @@ All notable changes to this fork of `shadowdark-extras` are documented here.
 
 Format based loosely on [Keep a Changelog](https://keepachangelog.com/).
 
+## [6.10.35] — 2026-06-06 — Spell/inventory enriched-link readability
+
+Verified live against Foundry 14.363 / Shadowdark 4.0.6 via MCP.
+
+### Fixed
+
+- **Enriched links (`@UUID` chips and inline `[[/r …]]` rolls) are now readable
+  inside expanded item descriptions on every enhanced character-sheet tab.**
+  Foundry's default content-link / inline-roll style is dark text on a light-gray
+  pill, which was unreadable against the enhanced tabs' dark theme. An earlier fix
+  only reached the Details tab, so the Spells, Inventory, Talents, Abilities, and
+  Effects tabs still showed the clashing light pill — e.g. the "Spell Effect: …"
+  chips in spell descriptions and the weapon damage dice in inventory. A single
+  shared rule now restyles these chips to a legible light-on-dark pill across all
+  enhanced tabs (and any future one), covering both content-links and inline-rolls.
+  (Verified live: spells tab 9/9 and inventory tab 19/19 enriched links restyled,
+  0 console errors.)
+
 ## [6.10.34] — 2026-06-05 — NPC & spell Target Defense saves
 
 Verified live against Foundry 14.363 / Shadowdark 4.0.6 via MCP.

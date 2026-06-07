@@ -3993,6 +3993,44 @@ li.entry.sdx-sidebar-unidentified {
     color: rgba(255, 255, 255, 0.95) !important;
 }
 
+/* --------------------------------------------------------------------------
+   Enriched-link chips (content-links + inline-rolls) inside expanded item
+   descriptions on ALL SDX-enhanced character-sheet tabs.
+
+   Foundry's default .content-link / .inline-roll render as a light-gray pill
+   (#ddd) with dark text (#222). Every SDX-enhanced tab shares the same
+   always-dark gradient background (#000 -> #2f2b2b: see .sdx-enhanced-spells
+   :3895, -abilities :3445, -talents :3668, -inventory :4118, -effects :4322),
+   so the default pill reads as an unreadable, out-of-theme blob.
+
+   This "color issue" has been patched piecemeal before (the .tab-details
+   color-only rule above; an earlier spells-only version of this block), but
+   each fix was scoped to one tab and the next tab (spells, then inventory's
+   "Light"/dice chips, ...) kept regressing. Consolidate: one rule keyed on
+   `section.tab[class*="sdx-enhanced-"]` covers every enhanced tab and any new
+   one automatically. Safe because every enhanced tab is unconditionally dark
+   (no light-theme inverse-contrast risk); the .tab-details fix above uses
+   .SD-box .content (not .item-details) so it does not overlap. */
+.shadowdark.sheet section.tab[class*="sdx-enhanced-"] .item-details a.content-link,
+.shadowdark.sheet section.tab[class*="sdx-enhanced-"] .item-details a.inline-roll {
+    color: rgba(255, 255, 255, 0.95) !important;
+    background: rgba(255, 255, 255, 0.14) !important;
+    border: 1px solid rgba(255, 255, 255, 0.28) !important;
+    text-shadow: none;
+}
+
+.shadowdark.sheet section.tab[class*="sdx-enhanced-"] .item-details a.content-link i,
+.shadowdark.sheet section.tab[class*="sdx-enhanced-"] .item-details a.inline-roll i {
+    color: rgba(226, 196, 121, 0.95) !important;
+}
+
+.shadowdark.sheet section.tab[class*="sdx-enhanced-"] .item-details a.content-link:hover,
+.shadowdark.sheet section.tab[class*="sdx-enhanced-"] .item-details a.inline-roll:hover {
+    background: rgba(255, 255, 255, 0.22) !important;
+    border-color: rgba(226, 196, 121, 0.55) !important;
+    color: #ffffff !important;
+}
+
 /* Spell action buttons */
 .sdx-spell-actions {
     display: inline-flex;
