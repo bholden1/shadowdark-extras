@@ -42,6 +42,7 @@ import { openCarousingOverlay, refreshCarousingOverlay } from "./CarousingOverla
 import { openCarousingTablesEditor } from "./CarousingTablesApp.mjs";
 import { openExpandedCarousingTablesEditor } from "./ExpandedCarousingTablesApp.mjs";
 import { initTemplateEffects, processTemplateTurnEffects, setupTemplateEffectFlags } from "./TemplateEffectsSD.mjs";
+import { filterEditor as openTMFXFilterEditor } from "./TMFXFilterEditor.mjs";
 import { initAuraEffects, createAuraOnActor, getActiveAuras, getTokensInAura } from "./AuraEffectsSD.mjs";
 import { registerDisplayNpcEnricher } from "./DisplayNpc.mjs";
 import { registerDisplayTableEnricher } from "./DisplayTable.mjs";
@@ -93,6 +94,7 @@ import { generateCaveLayout, buildCaveLoops, traceBoundaryLoops } from "./Dungeo
 import { assignBiomes, buildCellFloorMap, getBiomeDefs, getCustomBiomes, setCustomBiome, removeCustomBiome, resetCustomBiomes, getEnabledBiomeKeys, getDisabledBiomes, setBiomeEnabled } from "./DungeonBiomesSD.mjs";
 import { openBiomeEditor } from "./BiomeEditorSD.mjs";
 import { generateHexMap, clearGeneratedTiles } from "./HexGeneratorSD.mjs";
+import { buildHexcrawl, buildHexcrawlFromFile } from "./HexcrawlBuilderSD.mjs";
 import { getSceneLevelContext, applySceneLevelData, getDungeonBackground } from "./DungeonPainterSD.mjs";
 import { placeChangeLevelRegion, placeDungeonSurface, placeDungeonDecor } from "./DungeonRegionsSD.mjs";
 
@@ -9863,6 +9865,185 @@ Hooks.on("renderActorSheet", (app, html, data) => {
  * @param {jQuery} html - The HTML element
  * @param {Item} item - The item being edited
  */
+function activateTemplateTokenMagicStackHandlers(html, item) {
+	if (!html?.on || !item) return;
+
+	const getFilters = () => {
+		const filters = item.getFlag(MODULE_ID, "targeting")?.template?.tokenMagic?.filters;
+		return Array.isArray(filters) ? foundry.utils.deepClone(filters) : [];
+	};
+
+	const saveFilters = async (filters) => {
+		const clonedFilters = Array.isArray(filters) ? foundry.utils.deepClone(filters) : [];
+		await item.update({
+			[`flags.${MODULE_ID}.targeting.template.tokenMagic.filters`]: clonedFilters
+		}, { render: false });
+		item.updateSource?.({
+			[`flags.${MODULE_ID}.targeting.template.tokenMagic.filters`]: foundry.utils.deepClone(clonedFilters)
+		});
+	};
+
+	const refreshOpenTMFXStackWindows = () => {
+		const proxyId = `${item.id}-tmfx`;
+		const selector = foundry.applications.instances.get(`tmfx-filter-selector-${proxyId}`);
+		if (selector) selector.render(true);
+
+		for (const [appId, app] of foundry.applications.instances) {
+			if (String(appId).startsWith(`tmfx-filter-editor-${proxyId}-`)) app.render(true);
+		}
+	};
+
+	const updateStackSummary = () => {
+		const count = getFilters().length;
+		const summary = html.find(".sdx-tm-stack-summary");
+		if (summary.length) summary.text(count ? `${count} effect${count === 1 ? "" : "s"} saved` : "No custom stack");
+		html.find(".sdx-tm-clear-stack").prop("disabled", count === 0);
+	};
+
+	const updateStoredFilter = async (data) => {
+		const currentFilters = getFilters();
+		const filterIndex = currentFilters.findIndex(f => {
+			if (f.tmFilters?.tmFilterInternalId === data.filterInternalId) return true;
+			if (f.filterInternalId === data.filterInternalId) return true;
+			if (f.tmParams?.filterInternalId === data.filterInternalId) return true;
+			if (f.tmFilters?.tmParams?.filterInternalId === data.filterInternalId) return true;
+			return false;
+		});
+		if (filterIndex < 0) return;
+
+		const existing = currentFilters[filterIndex];
+		if (existing.tmFilters?.tmParams) {
+			currentFilters[filterIndex] = {
+				...existing,
+				...data,
+				tmFilters: {
+					...existing.tmFilters,
+					tmParams: foundry.utils.mergeObject(existing.tmFilters.tmParams, data, { inplace: false })
+				}
+			};
+		} else if (existing.tmParams) {
+			currentFilters[filterIndex] = {
+				...existing,
+				...data,
+				tmParams: foundry.utils.mergeObject(existing.tmParams, data, { inplace: false })
+			};
+		} else {
+			currentFilters[filterIndex] = { ...existing, ...data };
+		}
+
+		await saveFilters(currentFilters);
+		updateStackSummary();
+		refreshOpenTMFXStackWindows();
+	};
+
+	const buildStoredFilterEntries = (paramsArray, replace = false) => {
+		const entries = replace ? [] : getFilters();
+		const maxRank = () => {
+			const ranks = entries
+				.map(f => f?.tmFilters?.tmParams?.rank ?? f?.tmParams?.rank ?? f?.rank)
+				.filter(r => Number.isFinite(Number(r)))
+				.map(Number);
+			return ranks.length ? Math.max(...ranks) + 1 : 10000;
+		};
+
+		for (const rawParams of paramsArray || []) {
+			if (!rawParams?.filterType) continue;
+			const params = foundry.utils.deepClone(rawParams);
+			if (!Number.isFinite(Number(params.rank))) params.rank = maxRank();
+			if (!params.filterId) params.filterId = foundry.utils.randomID();
+			if (typeof params.enabled !== "boolean") params.enabled = true;
+			params.placeableId = `${item.id}-tmfx`;
+			params.filterInternalId = foundry.utils.randomID();
+			params.filterOwner = game.user.id;
+			params.placeableType = "Region";
+			params.updateId = foundry.utils.randomID();
+
+			entries.push({
+				tmFilters: {
+					tmFilterId: params.filterId,
+					tmFilterInternalId: params.filterInternalId,
+					tmFilterType: params.filterType,
+					tmFilterOwner: params.filterOwner,
+					tmParams: params
+				}
+			});
+		}
+
+		return entries;
+	};
+
+	const makeProxyDocument = () => ({
+		id: `${item.id}-tmfx`,
+		name: item.name,
+		sdxTitle: item.name || "Spell Activity",
+		_sdxVirtualTMFX: true,
+		parent: { id: game.scenes?.current?.id ?? "sdx-item-activity" },
+		get documentName() { return "SDXItemTMFX"; },
+		get isOwner() { return item.isOwner; },
+		getFlag: (scope, key) => {
+			if (scope === "tokenmagic" && key === "filters") return getFilters();
+			return item.flags?.[scope]?.[key];
+		},
+		update: async (data) => {
+			if (data?.filterInternalId && data?.filterType) {
+				await updateStoredFilter(data);
+				return;
+			}
+
+			const filters = data?.["flags.tokenmagic.filters"] ?? data?.flags?.tokenmagic?.filters;
+			if (Array.isArray(filters)) {
+				await saveFilters(filters);
+				updateStackSummary();
+				refreshOpenTMFXStackWindows();
+			}
+		},
+		_TMFXgetPlaceableType: () => "Region",
+		_TMFXgetMaxFilterRank: () => {
+			const ranks = getFilters()
+				.map(f => f?.tmFilters?.tmParams?.rank ?? f?.tmParams?.rank ?? f?.rank)
+				.filter(r => Number.isFinite(Number(r)))
+				.map(Number);
+			return ranks.length ? Math.max(...ranks) + 1 : 10000;
+		},
+		_TMFXsetFlag: async (filters) => {
+			await saveFilters(filters);
+			updateStackSummary();
+			refreshOpenTMFXStackWindows();
+		},
+		_TMFXunsetFlag: async () => {
+			await saveFilters([]);
+			updateStackSummary();
+			refreshOpenTMFXStackWindows();
+		},
+		_SDXaddFilterParams: async (paramsArray, options = {}) => {
+			const filters = buildStoredFilterEntries(paramsArray, Boolean(options.replace));
+			await saveFilters(filters);
+			updateStackSummary();
+			refreshOpenTMFXStackWindows();
+		},
+		_TMFXsetAnimeFlag: async () => {},
+		_TMFXunsetAnimeFlag: async () => {}
+	});
+
+	html.on("click", ".sdx-tm-edit-stack", function (event) {
+		event.preventDefault();
+		event.stopPropagation();
+		if (!game.modules.get("tokenmagic")?.active || !globalThis.TokenMagic) {
+			ui.notifications.warn("TokenMagic FX is not active.");
+			return;
+		}
+		openTMFXFilterEditor(makeProxyDocument(), event.currentTarget.getBoundingClientRect());
+	});
+
+	html.on("click", ".sdx-tm-clear-stack", async function (event) {
+		event.preventDefault();
+		event.stopPropagation();
+		await saveFilters([]);
+		updateStackSummary();
+		refreshOpenTMFXStackWindows();
+	});
+}
+
 function setupActivityRadioToggles(html, item) {
 	// Spell Damage toggle
 	html.find('.sdx-spell-damage-toggle').off('change').on('change', function (e) {
@@ -11235,6 +11416,7 @@ async function enhanceSpellSheet(app, html) {
 
 	// Setup UI listeners for targeting and aura effects
 	activateTemplateTargetingListeners(html[0], MODULE_ID);
+	activateTemplateTokenMagicStackHandlers(html, item);
 
 	//console.log(`${MODULE_ID} | Spell sheet enhanced for`, item.name);
 }
@@ -12054,6 +12236,7 @@ async function enhancePotionSheet(app, html) {
 
 	// Setup UI listeners for targeting and aura effects
 	activateTemplateTargetingListeners(html[0], MODULE_ID);
+	activateTemplateTokenMagicStackHandlers(html, item);
 
 	//console.log(`${MODULE_ID} | Potion sheet enhanced for`, item.name);
 }
@@ -12978,6 +13161,7 @@ async function enhanceScrollSheet(app, html) {
 
 	// Setup UI listeners for targeting and aura effects
 	activateTemplateTargetingListeners(html[0], MODULE_ID);
+	activateTemplateTokenMagicStackHandlers(html, item);
 
 	//console.log(`${MODULE_ID} | Scroll sheet enhanced for`, item.name);
 }
@@ -14624,6 +14808,7 @@ async function enhanceWandSheet(app, html) {
 
 	// Setup UI listeners for targeting and aura effects
 	activateTemplateTargetingListeners(html[0], MODULE_ID);
+	activateTemplateTokenMagicStackHandlers(html, item);
 
 	//console.log(`${MODULE_ID} | Wand sheet enhanced for`, item.name);
 }
@@ -19721,6 +19906,10 @@ Hooks.on("setup", () => {
 			// --- Hex generator ---
 			generateHexMap: audited("generateHexMap", gmOnly("generateHexMap", generateHexMap)),
 			clearGeneratedTiles: audited("clearGeneratedTiles", gmOnly("clearGeneratedTiles", clearGeneratedTiles)),
+
+			// --- Hexcrawl builder (data-driven; recreate a keyed hex map from a dataset) ---
+			buildHexcrawl: audited("buildHexcrawl", gmOnly("buildHexcrawl", buildHexcrawl)),
+			buildHexcrawlFromFile: audited("buildHexcrawlFromFile", gmOnly("buildHexcrawlFromFile", buildHexcrawlFromFile)),
 
 			// --- Dungeon Regions / Decor (multi-level orchestration) ---
 			placeChangeLevelRegion: audited("placeChangeLevelRegion", gmOnly("placeChangeLevelRegion", placeChangeLevelRegion)),

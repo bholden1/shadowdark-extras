@@ -1,4 +1,5 @@
 const getTokenMagic = () => window.TokenMagic;
+const isSDXVirtualDocument = (document) => Boolean(document?._sdxVirtualTMFX);
 const PresetsLibrary = {
     MAIN: 'tmfx-main',
     TEMPLATE: 'tmfx-template',
@@ -47,7 +48,7 @@ export function filterEditor(placeable, sourceBounds) {
  * @returns
  */
 export async function handleTMFXDropEvent(document, data) {
-    if (data.type === 'TMFX-Preset') {
+    if (data.type === 'TMFX-Preset' || data.type === 'TMFX Preset') {
         const { name, library } = data;
         const preset = getTokenMagic().getPresets(library).find((p) => p.name === name);
         if (!preset?.params?.length) return;
@@ -56,8 +57,12 @@ export async function handleTMFXDropEvent(document, data) {
             await document.update({ texture: preset.defaultTexture });
         }
 
-        await getTokenMagic().addFilters(document, preset.params);
-    } else if (data.type === 'TMFX-Filter') {
+        if (isSDXVirtualDocument(document) && typeof document._SDXaddFilterParams === 'function') {
+            await document._SDXaddFilterParams(deepClone(preset.params));
+        } else {
+            await getTokenMagic().addFilters(document, deepClone(preset.params));
+        }
+    } else if (data.type === 'TMFX-Filter' || data.type === 'TMFX Filter') {
         const { filterId, filterType, filterInternalId, placeableId, documentName, sceneId } = data;
         if (document.id === placeableId && document.parent.id === sceneId) {
             return;
@@ -70,7 +75,41 @@ export async function handleTMFXDropEvent(document, data) {
         const filter = deepClone(FilterSelector.getFilter(originDocument, { filterId, filterType, filterInternalId }));
         if (!filter) return;
 
-        await getTokenMagic().addUpdateFilters(document, [filter]);
+        if (isSDXVirtualDocument(document) && typeof document._SDXaddFilterParams === 'function') {
+            await document._SDXaddFilterParams([filter]);
+        } else {
+            await getTokenMagic().addUpdateFilters(document, [filter]);
+        }
+    } else if (data.type === 'TMFX Group') {
+        const { placeableId, documentName, sceneId } = data;
+        const scene = game.scenes.get(sceneId);
+        const originDocument = scene?.getEmbeddedDocument(documentName, placeableId);
+        if (!originDocument) return;
+
+        const filters = deepClone(originDocument.getFlag('tokenmagic', 'filters') || [])
+            .map(f => f?.tmFilters?.tmParams)
+            .filter(Boolean);
+        if (!filters.length) return;
+
+        if (isSDXVirtualDocument(document) && typeof document._SDXaddFilterParams === 'function') {
+            await document._SDXaddFilterParams(filters);
+        } else {
+            await getTokenMagic().addUpdateFilters(document, filters);
+        }
+    } else if (data.type === 'CommunityGalleryEntry' && data.subtype === 'TMFX Preset') {
+        try {
+            const response = await fetch(data.src);
+            const entry = await response.json();
+            const preset = entry.data;
+            if (!preset?.params?.length) return;
+            if (isSDXVirtualDocument(document) && typeof document._SDXaddFilterParams === 'function') {
+                await document._SDXaddFilterParams(deepClone(preset.params));
+            } else {
+                await getTokenMagic().addFilters(document, deepClone(preset.params));
+            }
+        } catch (e) {
+            console.warn('SDX | Failed to import TokenMagic gallery preset:', e);
+        }
     }
 }
 
@@ -111,7 +150,8 @@ export class FilterSelector extends HandlebarsApplicationMixin(ApplicationV2) {
     get title() {
         let title =
             game.i18n.localize('TMFX.TokenMagic') + ' ' + game.i18n.localize('TMFX.app.filterSelector.window.title');
-        if (this._document.documentName === 'Token' && this._document.name.trim()) title += ` [ ${this._document.name} ]`;
+        if (this._document.sdxTitle) title += ` [ ${this._document.sdxTitle} ]`;
+        else if (this._document.documentName === 'Token' && this._document.name.trim()) title += ` [ ${this._document.name} ]`;
         else title += ` [ ${this._document.documentName} ]`;
         return title;
     }
@@ -214,11 +254,12 @@ export class FilterSelector extends HandlebarsApplicationMixin(ApplicationV2) {
         );
         this._filters = this._paramArray
             .map((param) => {
-                const { filterId, filterType, rank, enabled, filterInternalId } = param;
+                const { filterId, filterType, rank, enabled, filterInternalId, placeableId } = param;
                 return {
                     filterId,
                     filterType,
                     filterInternalId,
+                    placeableId: placeableId || this._document.id,
                     label: filterId,
                     subtext: filterType,
                     rank,
@@ -242,7 +283,12 @@ export class FilterSelector extends HandlebarsApplicationMixin(ApplicationV2) {
             })
             .sort((f1, f2) => f1.rank - f2.rank);
 
-        return Object.assign(context, { filters: this._filters });
+        return Object.assign(context, {
+            filterGroups: [{
+                placeableId: this._document.id,
+                filters: this._filters
+            }]
+        });
     }
 
     /** @override */
@@ -263,7 +309,7 @@ export class FilterSelector extends HandlebarsApplicationMixin(ApplicationV2) {
     _onDragStart(event) {
         const { filterId, filterType, filterInternalId } = event.target.closest('.filter').dataset;
         const dragData = {
-            type: 'TMFX-Filter',
+            type: 'TMFX Filter',
             filterId,
             filterType,
             filterInternalId,
@@ -281,7 +327,14 @@ export class FilterSelector extends HandlebarsApplicationMixin(ApplicationV2) {
      */
     async _onWindowDrop(event) {
         const data = foundry.applications.ux.TextEditor.implementation.getDragEventData(event);
-        if (data.type === 'TMFX-Preset' || data.type === 'TMFX-Filter') return handleTMFXDropEvent(this._document, data);
+        if (
+            data.type === 'TMFX-Preset' ||
+            data.type === 'TMFX-Filter' ||
+            data.type === 'TMFX Preset' ||
+            data.type === 'TMFX Filter' ||
+            data.type === 'TMFX Group' ||
+            data.type === 'CommunityGalleryEntry'
+        ) return handleTMFXDropEvent(this._document, data);
         else if (data.type === 'Macro') return this._onAddMacro(data);
     }
 
@@ -291,15 +344,20 @@ export class FilterSelector extends HandlebarsApplicationMixin(ApplicationV2) {
      * @returns
      */
     async _onFilterDrop(event) {
+        event.stopPropagation();
         const data = foundry.applications.ux.TextEditor.implementation.getDragEventData(event);
+        if (data.type === 'TMFX Group') return handleTMFXDropEvent(this._document, data);
         if (!data.filterId || !data.filterType || !data.filterInternalId) return;
-        if (this._document.id !== data.placeableId && this._document.parent.id !== data.sceneId) return;
 
         const { filterId, filterType, filterInternalId } = event.target.closest('.filter').dataset;
-        if (data.filterId === filterId && data.filterType === filterType && data.filterInternalId === filterInternalId)
-            return;
+        if (data.placeableId === this._document.id) {
+            if (data.filterId === filterId && data.filterType === filterType && data.filterInternalId === filterInternalId)
+                return;
 
-        return this._onUpdateFilterRank(data, { filterId, filterType, filterInternalId });
+            return this._onUpdateFilterRank(data, { filterId, filterType, filterInternalId });
+        }
+
+        return handleTMFXDropEvent(this._document, data);
     }
 
     async _onUpdateFilterRank(fromFilter, toFilter) {
@@ -345,7 +403,7 @@ export class FilterSelector extends HandlebarsApplicationMixin(ApplicationV2) {
             },
         ];
 
-        if (this._document.documentName === "SDXPin") {
+        if (isSDXVirtualDocument(this._document)) {
             // Sequential updates might be safer for rank swapping if the manager handles it
             for (const u of updates) await this._document.update(u);
         } else {
@@ -417,13 +475,29 @@ export class FilterSelector extends HandlebarsApplicationMixin(ApplicationV2) {
     }
 
     static _onPresetSearch(event) {
-        import('/modules/tokenmagic/gui/apps/PresetSearch.js').then((module) => {
-            module.presetSearch({
-                position: {
-                    top: this.position.top,
-                    left: this.position.left + this.position.width + 15,
-                },
-            });
+        const options = {
+            position: {
+                top: this.position.top,
+                left: this.position.left + this.position.width + 15,
+            },
+        };
+        if (typeof getTokenMagic()?.presetSearch === 'function') {
+            getTokenMagic().presetSearch(options);
+            return;
+        }
+
+        const loadPresetSearch = async () => {
+            try {
+                return await import('/modules/tokenmagic/gui/apps/editor/PresetSearch.js');
+            } catch {
+                return await import('/modules/tokenmagic/gui/apps/PresetSearch.js');
+            }
+        };
+        loadPresetSearch().then((module) => {
+            module.presetSearch(options);
+        }).catch((err) => {
+            console.error("SDX | Failed to open TokenMagic preset search:", err);
+            ui.notifications.error("Could not open TokenMagic preset search.");
         });
     }
 
@@ -679,7 +753,7 @@ export class FilterEditor extends HandlebarsApplicationMixin(ApplicationV2) {
 
         Object.assign(params, this._filterIdentifier);
 
-        if (this._document.documentName === "SDXPin") {
+        if (isSDXVirtualDocument(this._document)) {
             await this._document.update(params);
         } else {
             await getTokenMagic().updateFiltersByPlaceable(this._document, [params]);
@@ -940,7 +1014,7 @@ export class AnimationEditor extends HandlebarsApplicationMixin(ApplicationV2) {
 
         const updateData = { ...this._filterIdentifier, animated: { [this._param]: params } };
 
-        if (this._document.documentName === "SDXPin") {
+        if (isSDXVirtualDocument(this._document)) {
             await this._document.update(updateData);
         } else {
             await TokenMagic.updateFiltersByPlaceable(this._document, [updateData]);
@@ -1180,7 +1254,7 @@ export class RandomizationEditor extends HandlebarsApplicationMixin(ApplicationV
 
         const updateData = { ...this._filterIdentifier, randomized: { [this._param]: update } };
 
-        if (this._document.documentName === "SDXPin") {
+        if (isSDXVirtualDocument(this._document)) {
             await this._document.update(updateData);
         } else {
             await getTokenMagic().updateFiltersByPlaceable(this._document, [updateData]);

@@ -5,6 +5,86 @@
 
 import { generateAuraConfigHTML, setupAuraConfigHandlers } from './AuraConfig.mjs';
 
+function normalizeTokenMagicPresetEntries(source, allowedLibraries = null) {
+	const entries = [];
+	const pushEntry = (value, fallbackName = null) => {
+		if (!value) return;
+		if (typeof value === 'string') {
+			entries.push({ name: value });
+			return;
+		}
+		if (typeof value !== 'object') return;
+		if (allowedLibraries && value.library && !allowedLibraries.has(value.library)) return;
+		const name = value.name || value.label || value.title || value.id || fallbackName;
+		if (!name || name === 'NOFX') return;
+		entries.push({ name: String(name) });
+	};
+
+	if (Array.isArray(source)) {
+		for (const entry of source) pushEntry(entry);
+	} else if (source instanceof Map) {
+		for (const [key, value] of source.entries()) pushEntry(value, key);
+	} else if (source && typeof source === 'object') {
+		for (const [key, value] of Object.entries(source)) pushEntry(value, key);
+	}
+
+	return entries;
+}
+
+function getTokenMagicPresets() {
+	if (!globalThis.TokenMagic) return [];
+
+	const presets = [];
+	const allowedLibraries = new Set(['tmfx-region', 'tmfx-template']);
+	const addPresets = (source) => presets.push(...normalizeTokenMagicPresetEntries(source, allowedLibraries));
+	const tokenMagic = globalThis.TokenMagic;
+
+	try {
+		if (typeof tokenMagic.getPresets === 'function') {
+			addPresets(tokenMagic.getPresets('tmfx-region'));
+			addPresets(tokenMagic.getPresets('tmfx-template'));
+		}
+	} catch (e) {
+		console.warn('shadowdark-extras | Failed to read TokenMagic presets via getPresets:', e);
+	}
+
+	for (const key of ['presets', 'Presets', 'defaultPresets', 'templatePresets', 'tmfxPresets', '_presets']) {
+		try {
+			addPresets(tokenMagic[key]);
+		} catch (e) {
+			// Ignore unstable TokenMagic internals.
+		}
+	}
+
+	for (const settingKey of ['presets', 'templatePresets', 'defaultPresets', 'customPresets', 'tmfxPresets']) {
+		try {
+			addPresets(game.settings.get('tokenmagic', settingKey));
+		} catch (e) {
+			// Setting may not exist in this TokenMagic version.
+		}
+	}
+
+	const seen = new Set();
+	return presets
+		.filter(p => {
+			const name = p?.name?.trim?.();
+			if (!name || seen.has(name)) return false;
+			seen.add(name);
+			return true;
+		})
+		.sort((a, b) => a.name.localeCompare(b.name));
+}
+
+function escapeAttribute(value) {
+	return String(value ?? '').replace(/[&<>"']/g, c => ({
+		'&': '&amp;',
+		'<': '&lt;',
+		'>': '&gt;',
+		'"': '&quot;',
+		"'": '&#39;'
+	}[c]));
+}
+
 /**
  * Generate the Template Effects configuration HTML
  * @param {string} MODULE_ID - The module ID
@@ -15,6 +95,7 @@ function generateTemplateEffectsHTML(MODULE_ID, flags) {
 	const templateEffects = flags.templateEffects || {
 		enabled: false,
 		triggers: {
+			onCreation: false,
 			onEnter: false,
 			onTurnStart: false,
 			onTurnEnd: false,
@@ -56,7 +137,13 @@ function generateTemplateEffectsHTML(MODULE_ID, flags) {
 			</h3>
 			
 			<div class="sdx-template-effects-config" style="${enabled ? '' : 'opacity: 0.5; pointer-events: none;'}">
-				<div class="SD-grid" style="grid-template-columns: 1fr 1fr 1fr 1fr; gap: 8px; margin-bottom: 12px;">
+				<div class="SD-grid" style="grid-template-columns: repeat(auto-fit, minmax(110px, 1fr)); gap: 8px; margin-bottom: 12px;">
+					<label class="sdx-checkbox-option" style="display: flex; align-items: center; gap: 4px;">
+						<input type="checkbox" 
+							name="flags.${MODULE_ID}.templateEffects.triggers.onCreation"
+							${triggers.onCreation ? 'checked' : ''}>
+						<span>On Cast</span>
+					</label>
 					<label class="sdx-checkbox-option" style="display: flex; align-items: center; gap: 4px;">
 						<input type="checkbox" 
 							name="flags.${MODULE_ID}.templateEffects.triggers.onEnter"
@@ -202,7 +289,8 @@ export function generateTemplateTargetingConfigHTML(MODULE_ID, flags) {
 				texture: '',
 				opacity: 0.5,
 				preset: 'NOFX',
-				tint: ''
+				tint: '',
+				filters: []
 			}
 		}
 	};
@@ -225,18 +313,14 @@ export function generateTemplateTargetingConfigHTML(MODULE_ID, flags) {
 	const tmOpacity = tokenMagic.opacity ?? 0.5;
 	const tmPreset = tokenMagic.preset || 'NOFX';
 	const tmTint = tokenMagic.tint || '';
+	const tmFilters = Array.isArray(tokenMagic.filters) ? tokenMagic.filters : [];
 
 	// Check if TokenMagic module is active
 	const tokenMagicActive = game.modules.get('tokenmagic')?.active ?? false;
 
-	// Get TokenMagic presets if module is active
-	let tmPresets = [];
-	if (tokenMagicActive && globalThis.TokenMagic?.getPresets) {
-		try {
-			tmPresets = TokenMagic.getPresets('tmfx-template') || [];
-		} catch (e) {
-			console.warn('shadowdark-extras | Failed to get TokenMagic presets:', e);
-		}
+	let tmPresets = tokenMagicActive ? getTokenMagicPresets() : [];
+	if (tmPreset && tmPreset !== 'NOFX' && !tmPresets.some(p => p.name === tmPreset)) {
+		tmPresets = [{ name: tmPreset }, ...tmPresets];
 	}
 
 	return `
@@ -413,7 +497,7 @@ export function generateTemplateTargetingConfigHTML(MODULE_ID, flags) {
 								<label>Special Effect</label>
 								<select name="flags.${MODULE_ID}.targeting.template.tokenMagic.preset" class="sdx-tm-preset-select">
 									<option value="NOFX" ${tmPreset === 'NOFX' ? 'selected' : ''}>None</option>
-									${tmPresets.map(p => `<option value="${p.name}" ${tmPreset === p.name ? 'selected' : ''}>${p.name}</option>`).join('')}
+									${tmPresets.map(p => `<option value="${escapeAttribute(p.name)}" ${tmPreset === p.name ? 'selected' : ''}>${escapeAttribute(p.name)}</option>`).join('')}
 								</select>
 								
 								<label>Effect Tint</label>
@@ -429,6 +513,19 @@ export function generateTemplateTargetingConfigHTML(MODULE_ID, flags) {
 										placeholder="#ffffff"
 										style="flex: 1;"
 										${tmPreset === 'NOFX' ? 'disabled' : ''}>
+								</div>
+
+								<label>Effect Stack</label>
+								<div class="sdx-tm-stack-controls" style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+									<button type="button" class="sdx-tm-edit-stack">
+										<i class="fas fa-sliders-h"></i> Edit TMFX Stack
+									</button>
+									<button type="button" class="sdx-tm-clear-stack" ${tmFilters.length ? '' : 'disabled'}>
+										<i class="fas fa-trash"></i> Clear
+									</button>
+									<span class="sdx-tm-stack-summary" style="font-size: 12px; color: var(--color-text-light-6);">
+										${tmFilters.length ? `${tmFilters.length} effect${tmFilters.length === 1 ? '' : 's'} saved` : 'No custom stack'}
+									</span>
 								</div>
 							</div>
 						</div>
