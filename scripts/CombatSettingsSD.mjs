@@ -5,7 +5,7 @@
 
 import { getWeaponBonuses, getWeaponEffectsToApply, evaluateRequirements, calculateWeaponBonusDamage, decrementDamageBonusUsage } from "./WeaponBonusConfig.mjs";
 import { startDurationSpell, linkEffectToDurationSpell, linkEffectToFocusSpell, linkTargetToFocusSpell, startFocusSpellIfNeeded, getActiveDurationSpells, endFocusSpell } from "./FocusSpellTrackerSD.mjs";
-import { setupTemplateEffectFlags, buildTemplateEffectsFlag, applyTemplateEffect, getTokensInTemplate } from "./TemplateEffectsSD.mjs";
+import { setupTemplateEffectFlags, buildTemplateEffectsFlag, applyTemplateEffect, getTokensInTemplate, processTemplateCreationEffects } from "./TemplateEffectsSD.mjs";
 import { createAuraOnActor } from "./AuraEffectsSD.mjs";
 import { readSdRollOutcome, readSdDamageRoll, resolveCardContext } from "./sd4Compat.mjs";
 import { getEffectiveCreatureType } from "./CreatureTypesApp.mjs";
@@ -2279,6 +2279,8 @@ export async function injectDamageCard(message, html, data) {
 					// (v14 silently drops post-create setFlag on MeasuredTemplate documents).
 					const templateEffectsConfig = item?.flags?.[MODULE_ID]?.templateEffects;
 					if (result.template && templateEffectsConfig?.enabled) {
+						await processTemplateCreationEffects(result.template, targets);
+
 						// Trigger Automated Animations for the template
 						// AA often fires too early (on chat message) before template exists.
 						// We manually trigger it here on the placed template.

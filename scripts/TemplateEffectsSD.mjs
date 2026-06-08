@@ -17,6 +17,9 @@ const _previousTokenPositions = new Map();
 // Track which tokens have been affected this combat turn (to prevent duplicates)
 const _affectedThisTurn = new Map();
 
+// Track templates whose creation trigger has already run.
+const _creationEffectsProcessed = new Set();
+
 /**
  * Initialize the template effects system
  * Call this from the main module during 'ready' hook
@@ -75,14 +78,7 @@ export function initTemplateEffects() {
             await templateDoc.setFlag(MODULE_ID, 'containedTokens', tokens.map(t => t.id));
         }
 
-        // Trigger onCreation for tokens already inside at placement time.
-        // This is separate from onEnter (which only fires for tokens that move in afterwards).
-        if (config?.enabled && config.triggers?.onCreation && tokens.length > 0) {
-            console.log(`shadowdark-extras | Triggering onCreation effects for new template ${config.spellName || 'template'}`);
-            for (const token of tokens) {
-                await applyTemplateEffect(templateDoc, token, 'creation');
-            }
-        }
+        await processTemplateCreationEffects(templateDoc, tokens);
     });
 
     // Hook for template/region deletion - clean up effects
@@ -535,6 +531,28 @@ export async function applyTemplateEffect(templateDoc, token, trigger) {
 }
 
 /**
+ * Trigger template effects for tokens caught at placement time.
+ * Guarded because Foundry v14 template/region creation can be observed from both
+ * the document create hook and the cast flow that already knows affected tokens.
+ */
+export async function processTemplateCreationEffects(templateDoc, tokensOverride = null) {
+    const config = templateDoc.flags?.[MODULE_ID]?.templateEffects;
+    if (!config?.enabled || !config.triggers?.onCreation) return;
+
+    const key = templateDoc.uuid || templateDoc.id;
+    if (_creationEffectsProcessed.has(key)) return;
+
+    const tokens = Array.isArray(tokensOverride) ? tokensOverride : getTokensInTemplate(templateDoc);
+    if (!tokens.length) return;
+
+    _creationEffectsProcessed.add(key);
+    console.log(`shadowdark-extras | Triggering onCreation effects for new template ${config.spellName || 'template'}`);
+    for (const token of tokens) {
+        await applyTemplateEffect(templateDoc, token, 'creation');
+    }
+}
+
+/**
  * Create an interactive template effect card with buttons
  * Used when autoApplyDamage is OFF
  */
@@ -593,12 +611,12 @@ async function createInteractiveTemplateCard(templateDoc, token, trigger, config
         }
 
         const abilityName = abilityNames[config.save.ability] || config.save.ability;
-        const btnBaseStyle = `flex: 1; color: #fff; border: 1px solid #555; padding: 6px 4px; cursor: pointer; border-radius: 3px; font-size: 11px;`;
+        const btnBaseStyle = `flex: 1; color: #f2f2f2; border: 1px solid #777; padding: 6px 4px; cursor: pointer; border-radius: 3px; font-size: 11px;`;
         content += `
             <style>
-                .sdx-save-btn-adv:hover { background: #2a4a2a !important; }
-                .sdx-save-btn-normal:hover { background: #4a4a4a !important; }
-                .sdx-save-btn-dis:hover { background: #4a2a2a !important; }
+                .sdx-template-effect-card .sdx-template-roll-save-btn:hover,
+                .sdx-template-effect-card .sdx-template-apply-damage-btn:hover,
+                .sdx-template-effect-card .sdx-template-apply-half-damage-btn:hover { background: #2a2a2a !important; }
             </style>
             <div style="background: #252525; border: 1px solid #333; border-radius: 3px; padding: 8px; margin-bottom: 8px;">
                 <p style="margin: 0 0 6px 0; font-size: 11px; color: #aaa;">
@@ -612,7 +630,7 @@ async function createInteractiveTemplateCard(templateDoc, token, trigger, config
                         data-dc="${dc}"
                         data-half-on-success="${config.save.halfOnSuccess}"
                         data-roll-mode="advantage"
-                        style="${btnBaseStyle} background: #2a3a2a;">
+                        style="${btnBaseStyle} background: #111;">
                         <i class="fas fa-angle-double-up"></i> Adv
                     </button>
                     <button type="button" class="sdx-template-roll-save-btn sdx-save-btn-normal" 
@@ -622,7 +640,7 @@ async function createInteractiveTemplateCard(templateDoc, token, trigger, config
                         data-dc="${dc}"
                         data-half-on-success="${config.save.halfOnSuccess}"
                         data-roll-mode="normal"
-                        style="${btnBaseStyle} background: #3a3a3a;">
+                        style="${btnBaseStyle} background: #111;">
                         <i class="fas fa-dice-d20"></i> Roll
                     </button>
                     <button type="button" class="sdx-template-roll-save-btn sdx-save-btn-dis" 
@@ -632,7 +650,7 @@ async function createInteractiveTemplateCard(templateDoc, token, trigger, config
                         data-dc="${dc}"
                         data-half-on-success="${config.save.halfOnSuccess}"
                         data-roll-mode="disadvantage"
-                        style="${btnBaseStyle} background: #3a2a2a;">
+                        style="${btnBaseStyle} background: #111;">
                         <i class="fas fa-angle-double-down"></i> Dis
                     </button>
                 </div>
@@ -646,7 +664,7 @@ async function createInteractiveTemplateCard(templateDoc, token, trigger, config
         content += `
             <div style="background: #252525; border: 1px solid #333; border-radius: 3px; padding: 8px;">
                 <p style="margin: 0 0 4px 0; font-size: 13px;">
-                    <i class="fas fa-heart-broken" style="color: #c44; margin-right: 4px;"></i>
+                    <i class="fas fa-heart-broken" style="color: #ddd; margin-right: 4px;"></i>
                     <strong>${damageTotal}</strong>${typeText}
                 </p>
                 <p style="margin: 0 0 8px 0; font-size: 10px; color: #888;">${config.damage.formula} = ${damageRoll.result}</p>
@@ -656,7 +674,7 @@ async function createInteractiveTemplateCard(templateDoc, token, trigger, config
                     data-damage="${damageTotal}"
                     data-damage-type="${config.damage?.type || 'damage'}"
                     data-actor-name="${actor?.name || token.name}"
-                    style="width: 100%; background: #533; color: #fff; border: 1px solid #744; padding: 6px; cursor: pointer; border-radius: 3px; margin-bottom: 4px;">
+                    style="width: 100%; background: #111; color: #f2f2f2; border: 1px solid #777; padding: 6px; cursor: pointer; border-radius: 3px; margin-bottom: 4px;">
                     <i class="fas fa-heart-broken"></i> Apply ${damageTotal} Damage
                 </button>
                 <button type="button" class="sdx-template-apply-half-damage-btn" 
@@ -665,7 +683,7 @@ async function createInteractiveTemplateCard(templateDoc, token, trigger, config
                     data-damage="${Math.floor(damageTotal / 2)}"
                     data-damage-type="${config.damage?.type || 'damage'}"
                     data-actor-name="${actor?.name || token.name}"
-                    style="width: 100%; background: #353; color: #fff; border: 1px solid #474; padding: 6px; cursor: pointer; border-radius: 3px;">
+                    style="width: 100%; background: #111; color: #f2f2f2; border: 1px solid #777; padding: 6px; cursor: pointer; border-radius: 3px;">
                     <i class="fas fa-shield-alt"></i> Apply ${Math.floor(damageTotal / 2)} (Half)
                 </button>
             </div>
@@ -1229,11 +1247,11 @@ async function createTemplateEffectMessage(templateDoc, token, trigger, result) 
     };
 
     let content = `
-        <div class="sdx-template-effect-card" style="border: 2px solid #7b68ee; border-radius: 8px; padding: 8px; background: linear-gradient(135deg, #1a1a2e 0%, #2a2a4a 100%);">
-            <h3 style="color: #9370db; margin: 0 0 6px 0;">
+        <div class="sdx-template-effect-card" style="border: 1px solid #777; border-radius: 4px; padding: 8px; background: #0b0b0b; color: #e8e8e8;">
+            <h3 style="color: #f2f2f2; margin: 0 0 6px 0; border-bottom: 1px solid #333; padding-bottom: 4px;">
                 <i class="fas fa-magic"></i> ${spellName}
             </h3>
-            <p style="margin: 4px 0; color: #cccccc;">
+            <p style="margin: 4px 0; color: #d6d6d6;">
                 <b>${token.name}</b> ${triggerText} the area
             </p>
     `;
@@ -1242,7 +1260,7 @@ async function createTemplateEffectMessage(templateDoc, token, trigger, result) 
     if (result.saveResult) {
         const sr = result.saveResult;
         const abilityName = abilityNames[sr.ability] || sr.ability;
-        const saveColor = sr.success ? "#66ff66" : "#ff6666";
+        const saveColor = sr.success ? "#f2f2f2" : "#d0d0d0";
         const saveText = sr.success ? "Save Successful!" : "Save Failed!";
 
         // Get the die result and use the stored modifier
@@ -1251,13 +1269,13 @@ async function createTemplateEffectMessage(templateDoc, token, trigger, result) 
         const modifierStr = modifier >= 0 ? `+${modifier}` : `${modifier}`;
 
         content += `
-            <div style="margin: 8px 0; padding: 6px; background: rgba(0,0,0,0.3); border-radius: 4px;">
-                <p style="margin: 2px 0; color: #aaa; font-size: 11px;">
+            <div style="margin: 8px 0; padding: 6px; background: #151515; border: 1px solid #333; border-radius: 4px;">
+                <p style="margin: 2px 0; color: #bbb; font-size: 11px;">
                     <i class="fas fa-shield-alt"></i> ${abilityName} Save vs DC ${sr.dc}
                 </p>
                 <p style="margin: 4px 0; color: #fff; font-size: 14px;">
-                    Roll: <span style="color: #ffcc00; font-weight: bold;">${dieResult}</span> 
-                    <span style="color: #aaa;">${modifierStr}</span> 
+                    Roll: <span style="color: #fff; font-weight: bold;">${dieResult}</span> 
+                    <span style="color: #bbb;">${modifierStr}</span> 
                     = <span style="font-weight: bold;">${sr.total}</span>
                 </p>
                 <p style="margin: 4px 0; color: ${saveColor}; font-weight: bold;">${saveText}</p>
@@ -1271,11 +1289,11 @@ async function createTemplateEffectMessage(templateDoc, token, trigger, result) 
         const halfText = result.halfDamage ? " (half)" : "";
 
         content += `
-            <div style="margin: 8px 0; padding: 6px; background: rgba(255,0,0,0.1); border-radius: 4px; border: 1px solid #ff6666;">
-                <p style="margin: 2px 0; color: #ff9999;">
+            <div style="margin: 8px 0; padding: 6px; background: #151515; border-radius: 4px; border: 1px solid #555;">
+                <p style="margin: 2px 0; color: #d6d6d6;">
                     <i class="fas fa-heart-broken"></i> Damage Applied${halfText}
                 </p>
-                <p style="margin: 4px 0; color: #ff6666; font-size: 18px; font-weight: bold;">
+                <p style="margin: 4px 0; color: #fff; font-size: 18px; font-weight: bold;">
                     ${result.damage}${typeText}
                 </p>
             </div>
@@ -1283,7 +1301,7 @@ async function createTemplateEffectMessage(templateDoc, token, trigger, result) 
     } else if (result.saved && config?.save?.halfOnSuccess === false) {
         // Save fully negated
         content += `
-            <p style="margin: 4px 0; color: #66ff66;">
+            <p style="margin: 4px 0; color: #f2f2f2;">
                 <i class="fas fa-shield-alt"></i> Damage negated by save!
             </p>
         `;
