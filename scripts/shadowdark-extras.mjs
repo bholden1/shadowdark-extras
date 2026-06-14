@@ -78,6 +78,7 @@ import { WallContextMenuSD } from "./WallContextMenuSD.mjs";
 import { sdxDrawingTool } from "./SDXDrawingTool.mjs";
 import { sdxDrawingToolbar } from "./SDXDrawingToolbar.mjs";
 import { SDXRollerApp } from "./SDXRollerApp.mjs";
+import { ensureMutableItemCompendiumIndexes } from "./CompendiumIndexSD.mjs";
 import { initSDXCoords, registerSDXCoordsSettings, registerSDXCoordsMenu } from "./SDXCoordsSD.mjs";
 import { SDXCoordsSettingsApp } from "./SDXCoordsSettingsSD.mjs";
 import { initHexTooltip, HEX_JOURNAL_NAME } from "./HexTooltipSD.mjs";
@@ -16730,9 +16731,22 @@ Hooks.once("ready", () => {
 
 
 
+	const prepareGearSheetCompendiumIndexes = () => {
+		ensureMutableItemCompendiumIndexes(game.packs, foundry.utils.deepClone);
+	};
+
+	// Shadowdark's armor and weapon sheet helpers request full Item system data
+	// from every pack. Normalize any frozen v14 index entries first.
+	const originalGetArmorSheetData = shadowdark.sheets.ItemSheetSD.prototype.getSheetDataForArmorItem;
+	shadowdark.sheets.ItemSheetSD.prototype.getSheetDataForArmorItem = async function (context) {
+		prepareGearSheetCompendiumIndexes();
+		return originalGetArmorSheetData.call(this, context);
+	};
+
 	// Enhance weapon sheet to include actor's inventory ammunition in the dropdown
 	const originalGetWeaponSheetData = shadowdark.sheets.ItemSheetSD.prototype.getSheetDataForWeaponItem;
 	shadowdark.sheets.ItemSheetSD.prototype.getSheetDataForWeaponItem = async function (context) {
+		prepareGearSheetCompendiumIndexes();
 		await originalGetWeaponSheetData.call(this, context);
 
 		const actor = context.item.actor;

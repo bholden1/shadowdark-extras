@@ -21,7 +21,8 @@
             <div class="sdx-roller-participant-row">
                 <span class="sdx-roller-participant-dot participant-color"></span>
                 <span class="sdx-roller-participant-name">{{this.name}}</span>
-                <button class="sdx-roller-remove-participant" data-uuid="{{this.uuid}}" title="Remove">&times;</button>
+                <button type="button" class="sdx-roller-remove-participant" data-action="remove-participant"
+                    data-uuid="{{this.uuid}}" title="Remove">&times;</button>
             </div>
             {{/each}}
 
@@ -35,7 +36,8 @@
             <div class="sdx-roller-participant-row contestant-row">
                 <span class="sdx-roller-participant-dot contestant-color"></span>
                 <span class="sdx-roller-participant-name">{{this.name}}</span>
-                <button class="sdx-roller-remove-participant" data-uuid="{{this.uuid}}" title="Remove">&times;</button>
+                <button type="button" class="sdx-roller-remove-participant" data-action="remove-participant"
+                    data-uuid="{{this.uuid}}" title="Remove">&times;</button>
             </div>
             {{/each}}
         </div>
@@ -60,18 +62,18 @@
     {{!-- Toggles --}}
     <div class="sdx-roller-row">
         <label class="sdx-roller-row-label">Show DC</label>
-        <button class="sdx-roller-toggle sdx-roller-toggle-showdc {{#if showDc}}active{{/if}}">
+        <button type="button" class="sdx-roller-toggle sdx-roller-toggle-showdc {{#if showDc}}active{{/if}}">
             <span class="sdx-toggle-knob"></span>
         </button>
         <label class="sdx-roller-row-label">Hide names</label>
-        <button class="sdx-roller-toggle sdx-roller-toggle-hidenames {{#if hideNames}}active{{/if}}">
+        <button type="button" class="sdx-roller-toggle sdx-roller-toggle-hidenames {{#if hideNames}}active{{/if}}">
             <span class="sdx-toggle-knob"></span>
         </button>
     </div>
 
     <div class="sdx-roller-row">
         <label class="sdx-roller-row-label">Use Average</label>
-        <button class="sdx-roller-toggle sdx-roller-toggle-useavg {{#if useAverage}}active{{/if}}">
+        <button type="button" class="sdx-roller-toggle sdx-roller-toggle-useavg {{#if useAverage}}active{{/if}}">
             <span class="sdx-toggle-knob"></span>
         </button>
     </div>
@@ -84,7 +86,7 @@
 
     {{!-- Action buttons --}}
     <div class="sdx-roller-actions">
-        <button class="sdx-roller-btn-roll">Roll</button>
-        <button class="sdx-roller-btn-cancel">Cancel</button>
+        <button type="button" class="sdx-roller-btn-roll" data-action="roll">Roll</button>
+        <button type="button" class="sdx-roller-btn-cancel" data-action="cancel">Cancel</button>
     </div>
 </div>

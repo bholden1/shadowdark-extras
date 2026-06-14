@@ -4,6 +4,31 @@ All notable changes to this fork of `shadowdark-extras` are documented here.
 
 Format based loosely on [Keep a Changelog](https://keepachangelog.com/).
 
+## [6.10.38] — 2026-06-13 — Imported gear and SDX Roller fixes
+
+Verified live against Foundry 14.364 / Shadowdark 4.0.6.
+
+### Fixed
+
+- **Shadowdarkling-imported weapons and armor can be edited again.** Foundry v14
+  can cache a loaded compendium document's frozen source data in the pack index.
+  Shadowdark's gear-sheet helpers later request fuller index data, which caused
+  core to throw `Cannot add property predefinedEffects, object is not
+  extensible`. SDX now replaces only affected Item index entries with mutable
+  clones before the armor or weapon helper runs.
+- **SDX Roller controls respond again.** The ApplicationV2 migration left the
+  Roll, Cancel, and participant-removal buttons without their `data-action`
+  bindings. The actions are restored, and every button in the form is explicitly
+  non-submitting.
+
+### Changed
+
+- Includes the lead developer's previously committed aura runtime update:
+  native token-emanation Regions, duplicate-trigger suppression, more reliable
+  enter/leave membership cleanup, tracker synchronization, and updated TokenMagic
+  handling. The update loaded without console errors; its original reported
+  symptom was not independently reproduced.
+
 ## [6.10.37] — 2026-06-07 — Hotfix: restore module loading
 
 ### Fixed
