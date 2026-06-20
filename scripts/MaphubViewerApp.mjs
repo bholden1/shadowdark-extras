@@ -90,6 +90,8 @@ export class MaphubViewerApp extends ApplicationV2 {
 	async _onRender(_context, _options) {
 		window.addEventListener("message", this._onMessage);
 
+		this._injectImportButton();
+
 		const container = this.element.querySelector(".sdx-maphub-container");
 		if (!container) return;
 
@@ -224,6 +226,48 @@ export class MaphubViewerApp extends ApplicationV2 {
 		});
 
 		return controls;
+	}
+
+	/**
+	 * Inject an always-visible "Import Scene" button directly into the window
+	 * header bar (next to the ⋯ controls menu). The other actions live in the
+	 * collapsed ⋯ dropdown; importing is the primary action, so it gets a
+	 * prominent labelled button so users don't have to hunt for it.
+	 */
+	_injectImportButton() {
+		try {
+			if (!game.user.isGM) return;
+			const header = this.element?.querySelector(".window-header");
+			if (!header || header.querySelector(".sdx-import-scene-btn")) return;
+
+			const btn = document.createElement("button");
+			btn.type = "button";
+			btn.className = "header-control sdx-import-scene-btn";
+			btn.innerHTML = `<i class="fa-solid fa-map"></i><span>Import Scene</span>`;
+			btn.setAttribute("aria-label", "Import Scene");
+			btn.dataset.tooltip = "Create a Foundry scene from this map";
+			btn.style.cssText = [
+				"display:inline-flex", "align-items:center", "gap:4px",
+				"width:auto", "padding:0 8px", "margin-right:4px",
+				"font-size:var(--font-size-12,12px)", "white-space:nowrap",
+				"border:1px solid var(--color-border-light-tertiary,#7a7971)",
+				"border-radius:4px", "flex:0 0 auto",
+			].join(";");
+			btn.addEventListener("click", (ev) => {
+				ev.preventDefault();
+				ev.stopPropagation();
+				this._importScene();
+			});
+
+			// Place it just before the controls (⋯) menu toggle / close button.
+			const anchor = header.querySelector('[data-action="toggleControls"]')
+				?? header.querySelector('button.header-control[data-action="close"]')
+				?? header.querySelector('[data-action="close"]');
+			if (anchor) header.insertBefore(btn, anchor);
+			else header.appendChild(btn);
+		} catch (err) {
+			console.warn(`${MODULE_ID} | Failed to inject Import Scene header button`, err);
+		}
 	}
 
 	/** Action handler for Export to Chat header button. */
@@ -530,43 +574,68 @@ export class MaphubViewerApp extends ApplicationV2 {
 		try {
 			const sceneName = `${this._getMapLabel()} ${new Date().toLocaleString()}`;
 			let grid = this._getImportGridSize();
-			if (isDwellings && !this._getDwellingsFloor()) {
-				throw new Error("Dwellings wall/door geometry was not available. Enable local Maphub files and reopen the generator before importing.");
-			}
 
 			let walls = [];
 			let notes = [];
 			let dungeonTransform = null;
+			let importImg = imgPath;          // background to use (may be rescaled)
+			let importW = null, importH = null;
 
-			// For One Page Dungeon, derive the EXACT grid→pixel mapping from the
-			// generator's own render transform (read from the live controller
-			// after capture). The captured image is the full "poster" (title +
-			// callouts + map); the map is only a rotated/scaled sub-region, so we
-			// cannot guess scale from the image size. canvasPx = M · (grid × 30),
-			// where M is map.__getRenderTransform() and 30 is the generator's
-			// internal local-units-per-cell.
+			// Exact grid alignment for Dungeon + Cave.
+			//
+			// Foundry's scene grid is anchored at canvas (0,0) and its lines fall
+			// at integer multiples of grid.size (an integer). The generator draws
+			// cells at a NON-integer pixel size, so rounding grid.size leaves the
+			// grid drifting a fraction of a cell — the "slightly off" the user saw.
+			//
+			// Fix: rescale the captured image by f = round(cellPx)/cellPx so one
+			// cell becomes EXACTLY gridPx pixels (no drift), then crop it by the
+			// sub-cell phase so the generator's cell-zero edge lands on (0,0). The
+			// walls/notes go through the same scale+crop. Result: Foundry's default
+			// grid coincides with the map's cells with no offset fields at all.
+			//
+			// `align` carries the per-generator render mapping; `mapPx` applies the
+			// scale+crop to any captured-canvas pixel.
+			let mapPx = (x, y) => ({ x: Math.round(x), y: Math.round(y) });
+			let align = null;
 			if (isDungeon) {
 				dungeonTransform = this._getDungeonTransform();
 				if (!dungeonTransform) {
 					throw new Error("One Page Dungeon render transform was not available. Reopen the generator (bundled local files) and try again.");
 				}
-				grid = Math.max(1, Math.round(dungeonTransform.cellPx));
+				// Cell-zero edge sits at canvas toPixel(0,0) == (M.tx, M.ty).
+				align = { toPixel: dungeonTransform.toPixel, cellPx: dungeonTransform.cellPx, origin: dungeonTransform.toPixel(0, 0) };
+			} else if (isCave) {
+				align = this._getCaveAlignSource();
 			}
 
-			let scene = await this._createImageScene({ name: sceneName, img: imgPath, grid });
+			if (align && align.cellPx > 0) {
+				const gridPx = Math.max(1, Math.round(align.cellPx));
+				const f = gridPx / align.cellPx;
+				const phase = (v) => (((Math.round(v) % gridPx) + gridPx) % gridPx);
+				const shiftX = phase(align.origin.x * f);
+				const shiftY = phase(align.origin.y * f);
+				const aligned = await this._renderAlignedImage(imgPath, f, shiftX, shiftY);
+				importImg = aligned.path; importW = aligned.width; importH = aligned.height;
+				grid = gridPx;
+				mapPx = (x, y) => ({ x: Math.round(x * f - shiftX), y: Math.round(y * f - shiftY) });
+			}
+
+			let scene = await this._createImageScene({ name: sceneName, img: importImg, grid, width: importW, height: importH });
 
 			if (isDungeon) {
 				try {
 					const parsed = OnePageParserSD.parseDungeonData(this._lastSavedDungeonJson, 1, { gridSpace: true });
 					const T = dungeonTransform.toPixel;
 					walls = (parsed.walls || []).map(w => {
-						const a = T(w.c[0], w.c[1]);
-						const b = T(w.c[2], w.c[3]);
+						const t0 = T(w.c[0], w.c[1]); const a = mapPx(t0.x, t0.y);
+						const t1 = T(w.c[2], w.c[3]); const b = mapPx(t1.x, t1.y);
 						return { ...w, c: [a.x, a.y, b.x, b.y] };
 					});
 					notes = (parsed.notes || []).map(n => {
 						const p = T(n.x, n.y);
-						return { ...n, x: p.x, y: p.y };
+						const m = mapPx(p.x, p.y);
+						return { ...n, x: m.x, y: m.y };
 					});
 				} catch (e) {
 					console.warn("Could not parse current Dungeon JSON for import", e);
@@ -574,7 +643,12 @@ export class MaphubViewerApp extends ApplicationV2 {
 			} else if (isDwellings) {
 				walls = this._getDwellingsWalls({ width: scene.width, height: scene.height, grid });
 			} else if (isCave) {
-				walls = this._getCaveWalls({ width: scene.width, height: scene.height });
+				// _getCaveWalls returns captured-canvas px; run them through mapPx.
+				walls = this._getCaveWalls().map(w => {
+					const a = mapPx(w.c[0], w.c[1]);
+					const b = mapPx(w.c[2], w.c[3]);
+					return { ...w, c: [a.x, a.y, b.x, b.y] };
+				});
 			}
 
 			if (walls.length) {
@@ -688,22 +762,92 @@ export class MaphubViewerApp extends ApplicationV2 {
 	}
 
 	/**
+	 * The OpenFL stage of a bundled (maphub-fork) generator, reachable through
+	 * the exposed class registry. Used to read live render transforms.
+	 * @returns {object|null}
+	 */
+	_getMaphubStage() {
+		try {
+			const cw = this._iframe?.contentWindow;
+			return cw?.__maphubClasses?.["lime.app.Application"]?.current?.__window?.stage ?? null;
+		} catch (_) {
+			return null;
+		}
+	}
+
+	/**
+	 * Find the display object that draws the generator's geometry and return its
+	 * live render transform (geometry-local → canvas pixels). The geometry sprite
+	 * is the one whose own local bounds match the geometry's bounding box at a
+	 * single uniform scale (so model/grid coordinates map straight to canvas
+	 * pixels through `__getRenderTransform()` — the same idea proven for the
+	 * dungeon, but read from the OpenFL tree instead of a patched controller).
+	 *
+	 * @param {{w:number,h:number}} geomBounds Geometry bbox expressed in the SAME
+	 *   units the target sprite draws in (i.e. the sprite is expected to draw the
+	 *   geometry roughly 1:1 in its own local space). For Cave that's `model.rect`.
+	 * @returns {{ toPixel: (x:number,y:number)=>{x:number,y:number}, scale:number }|null}
+	 */
+	_getMaphubGeometryTransform(geomBounds) {
+		try {
+			const stage = this._getMaphubStage();
+			const gw = Number(geomBounds?.w) || 0;
+			const gh = Number(geomBounds?.h) || 0;
+			if (!stage || gw <= 0 || gh <= 0) return null;
+
+			let best = null;
+			const visit = (obj, depth) => {
+				if (!obj || depth > 14) return;
+				for (const child of (obj.__children || [])) {
+					try {
+						const r = child.getBounds(child); // local-space bounds
+						if (r && r.width > 0 && r.height > 0) {
+							const rx = r.width / gw, ry = r.height / gh;
+							// The geometry sprite draws in the geometry's own units, so
+							// its local bounds match geomBounds on BOTH axes at ~1:1.
+							// Reward axis agreement (rx≈ry) AND unit match (~1) so we
+							// don't latch onto unrelated uniformly-scaled sprites.
+							const uniform = Math.abs(rx - ry);
+							const unit = Math.abs((rx + ry) / 2 - 1);
+							const score = uniform + unit;
+							if (!best || score < best.score) best = { child, score };
+						}
+					} catch (_) { /* some nodes refuse getBounds */ }
+					visit(child, depth + 1);
+				}
+			};
+			visit(stage, 0);
+			// Allow up to ~25% bound inflation (stroke/hatching drawn past the outline).
+			if (!best || best.score > 0.3) return null;
+
+			const M = best.child.__getRenderTransform();
+			if (!M || !Number.isFinite(M.a)) return null;
+			const toPixel = (x, y) => ({
+				x: Math.round(M.a * x + M.c * y + M.tx),
+				y: Math.round(M.b * x + M.d * y + M.ty),
+			});
+			return { toPixel, scale: Math.hypot(M.a, M.b) };
+		} catch (err) {
+			console.warn(`${MODULE_ID} | Failed to read maphub geometry transform`, err);
+			return null;
+		}
+	}
+
+	/**
 	 * Build Foundry Wall documents that trace the cave outline polygons.
 	 *
 	 * The Cave generator stores its geometry in model coordinates:
-	 *   - `model.simple`  : array of closed polygons (outer cave boundary +
-	 *                       any interior stone "island" boundaries), one vertex
-	 *                       per outline hex-edge.
-	 *   - `model.rect`    : bounds of the main outline (model coords).
+	 *   - `model.simple` : array of closed polygons (outer boundary + interior
+	 *                      stone "island" boundaries) in model coordinates.
+	 *   - `model.rect`   : bounds of the main outline (model coordinates).
 	 *
-	 * The exported PNG (which becomes the scene background) is produced by
-	 * Cave's `exportPNG()` with a deterministic transform derived purely from
-	 * `model.rect`.  We recompute that exact transform here so the walls line up
-	 * with the imported image, then map every polygon edge to a wall segment.
-	 * @param {{ width: number, height: number }} dims The created scene size.
+	 * The map sprite draws those polygons directly in model coordinates, so we
+	 * read its live render transform and map every vertex straight to the pixels
+	 * of the captured on-screen image — exact alignment regardless of the
+	 * generator's fit-scale.
 	 * @returns {object[]} Wall document data.
 	 */
-	_getCaveWalls({ width, height }) {
+	_getCaveWalls() {
 		const model = this._getCaveModel();
 		const polys = model?.simple ?? model?.curves;
 		const rect = model?.rect;
@@ -712,37 +856,14 @@ export class MaphubViewerApp extends ApplicationV2 {
 			return [];
 		}
 
-		const rectW = Number(rect.width) || 0;
-		const rectH = Number(rect.height) || 0;
-		if (rectW <= 0 || rectH <= 0) return [];
-		const left = (typeof rect.get_left === "function") ? rect.get_left() : rect.x;
-		const right = (typeof rect.get_right === "function") ? rect.get_right() : (rect.x + rectW);
-		const top = (typeof rect.get_top === "function") ? rect.get_top() : rect.y;
-		const bottom = (typeof rect.get_bottom === "function") ? rect.get_bottom() : (rect.y + rectH);
-
-		// Mirror Cave.exportPNG(): pad the model rect by 20% of its larger side,
-		// fit-scale the view (b), then scale the bitmap so total pixels ~= 16.7M (k).
-		const pad = 0.2 * Math.max(rectW, rectH);
-		const D = rectW + pad;
-		const F = rectH + pad;
-		let b = Math.min(D / rectW, F / rectH);
-		if (b > 1) b = Math.sqrt(b);
-		b /= 1.1;
-		const k = Math.sqrt(16777215 / (D * F));
-		const viewX = (D / 2) - (b * (left + right) / 2);
-		const viewY = (F / 2) - (b * (top + bottom) / 2);
-
-		// Pixel size the exporter produced; rescale onto the actual scene size in
-		// case the importer adjusted dimensions.
-		const pngW = Math.floor(D * k) || 1;
-		const pngH = Math.floor(F * k) || 1;
-		const sx = (Number(width) || pngW) / pngW;
-		const sy = (Number(height) || pngH) / pngH;
-
-		const toPixel = (pt) => ({
-			x: Math.round((k * (viewX + b * pt.x)) * sx),
-			y: Math.round((k * (viewY + b * pt.y)) * sy),
-		});
+		const rectW = Number(rect.width) || ((rect.get_right?.() ?? 0) - (rect.get_left?.() ?? 0));
+		const rectH = Number(rect.height) || ((rect.get_bottom?.() ?? 0) - (rect.get_top?.() ?? 0));
+		const transform = this._getMaphubGeometryTransform({ w: rectW, h: rectH });
+		if (!transform) {
+			ui.notifications.warn("Cave render transform was not available; imported image without walls.");
+			return [];
+		}
+		const toPixel = (p) => transform.toPixel(p.x, p.y);
 
 		const walls = [];
 		for (const poly of polys) {
@@ -989,25 +1110,108 @@ export class MaphubViewerApp extends ApplicationV2 {
 		}
 	}
 
-	async _createImageScene({ name, img, grid }) {
-		const loader = new foundry.canvas.TextureLoader();
-		const texture = await loader.loadTexture(img);
+	/**
+	 * Render mapping for a Cave import: the generator draws a square grid via
+	 * cave.mapping.SquareGrid (static `.size` = model units per cell) in the same
+	 * model space as the outline polygons. Returns the live geometry transform,
+	 * the on-screen cell size, and the canvas px of grid-line 0 (the model rect's
+	 * top-left), or null if the grid layer isn't available.
+	 * @returns {{ toPixel:(x:number,y:number)=>{x:number,y:number}, cellPx:number, origin:{x:number,y:number} }|null}
+	 */
+	_getCaveAlignSource() {
+		try {
+			const cw = this._iframe?.contentWindow;
+			const SquareGrid = cw?.__maphubClasses?.["cave.mapping.SquareGrid"];
+			const model = this._getCaveModel();
+			const rect = model?.rect;
+			const cellUnits = Number(SquareGrid?.size);
+			if (!SquareGrid?.inst || !(cellUnits > 0) || !rect) return null;
+
+			const rectW = Number(rect.width) || ((rect.get_right?.() ?? 0) - (rect.get_left?.() ?? 0));
+			const rectH = Number(rect.height) || ((rect.get_bottom?.() ?? 0) - (rect.get_top?.() ?? 0));
+			const transform = this._getMaphubGeometryTransform({ w: rectW, h: rectH });
+			if (!transform) return null;
+
+			const left = (rect.get_left?.() ?? rect.x ?? 0);
+			const top = (rect.get_top?.() ?? rect.y ?? 0);
+			return {
+				toPixel: transform.toPixel,
+				cellPx: cellUnits * transform.scale,
+				origin: transform.toPixel(left, top),
+			};
+		} catch (err) {
+			console.warn(`${MODULE_ID} | Failed to read cave align source`, err);
+			return null;
+		}
+	}
+
+	/**
+	 * Produce a grid-aligned copy of the captured map: scale the source by `scale`
+	 * (so one cell becomes an exact integer of pixels) and shift it up-left by
+	 * (shiftX, shiftY) (so the generator's cell-zero edge lands on (0,0)). The
+	 * walls/notes are run through the matching scale+shift, so Foundry's default
+	 * grid then coincides with the map's cells with no offset fields.
+	 * @returns {Promise<{ path:string, width:number, height:number }>}
+	 */
+	async _renderAlignedImage(imgPath, scale, shiftX, shiftY) {
+		try {
+			const img = await new Promise((res, rej) => {
+				const im = new Image();
+				im.crossOrigin = "anonymous";
+				im.onload = () => res(im);
+				im.onerror = rej;
+				im.src = "/" + imgPath;
+			});
+			const w = Math.max(1, Math.round(img.naturalWidth * scale));
+			const h = Math.max(1, Math.round(img.naturalHeight * scale));
+			const canvas = document.createElement("canvas");
+			canvas.width = w; canvas.height = h;
+			const ctx = canvas.getContext("2d");
+			// Fill with the map's background colour so the sub-cell crop doesn't
+			// leave a transparent strip on the far edges.
+			try {
+				const probe = document.createElement("canvas"); probe.width = probe.height = 1;
+				const pctx = probe.getContext("2d"); pctx.drawImage(img, 0, 0, 1, 1);
+				const d = pctx.getImageData(0, 0, 1, 1).data;
+				ctx.fillStyle = `rgb(${d[0]},${d[1]},${d[2]})`;
+				ctx.fillRect(0, 0, w, h);
+			} catch (_) { /* keep transparent */ }
+			ctx.drawImage(img, 0, 0, img.naturalWidth, img.naturalHeight, -shiftX, -shiftY, w, h);
+			const blob = await new Promise(r => canvas.toBlob(r, "image/png"));
+			const FP = foundry.applications.apps.FilePicker?.implementation ?? FilePicker;
+			await FP.createDirectory("data", "maps").catch(() => { });
+			await FP.createDirectory("data", "maps/maphub").catch(() => { });
+			const file = new File([blob], `aligned_${this._mapType}_${Date.now()}.png`, { type: "image/png" });
+			const resp = await FP.upload("data", "maps/maphub", file, {});
+			return { path: resp?.path || imgPath, width: w, height: h };
+		} catch (err) {
+			console.warn(`${MODULE_ID} | Failed to render aligned image`, err);
+			return { path: imgPath, width: null, height: null };
+		}
+	}
+
+	async _createImageScene({ name, img, grid, width = null, height = null }) {
+		let w = width, h = height;
+		if (!(w > 0) || !(h > 0)) {
+			const loader = new foundry.canvas.TextureLoader();
+			const texture = await loader.loadTexture(img);
+			w = texture.width; h = texture.height;
+		}
 		const sceneData = {
 			name,
 			grid: { size: grid },
-			width: texture.width,
-			height: texture.height,
+			width: w,
+			height: h,
 			padding: 0,
+			shiftX: 0,
+			shiftY: 0,
 			fogExploration: true,
 			tokenVision: true,
 		};
 
 		const foundryMajor = Number(game.version?.split?.(".")?.[0] ?? 0);
 		if (foundryMajor >= 14) {
-			sceneData.levels = [{
-				name: "Level",
-				background: { src: img },
-			}];
+			sceneData.levels = [{ name: "Level", background: { src: img } }];
 		} else {
 			sceneData.background = { src: img };
 		}
@@ -1193,6 +1397,7 @@ export class MaphubViewerApp extends ApplicationV2 {
 	/** Human-readable label for the map type. */
 	_getMapLabel() {
 		const labels = {
+			realm: "Realm Map",
 			mfcg: "City Map",
 			village: "Village Map",
 			cave: "Cave Map",
@@ -1255,10 +1460,20 @@ export class MaphubViewerApp extends ApplicationV2 {
 	/** Build the iframe src. */
 	async _buildSrc() {
 		const ext = this._queryString ? `${this._externalBase}?${this._queryString}` : this._externalBase;
-		// Dungeon import depends on the bundled local generator so its exports can
-		// be intercepted and converted inside Foundry. Never open the external
-		// Watabou page for dungeon imports, regardless of the general Maphub setting.
-		const useLocal = this._mapType === "dungeon" || game.settings.get(MODULE_ID, "settlement.useLocalMaphub");
+		// Importing a scene requires reading the generator's canvas/geometry,
+		// which the browser only allows when the generator is served from
+		// Foundry's own origin. An external (cross-origin) Watabou page can't be
+		// captured at all, so every import-capable generator we bundle is served
+		// locally regardless of the "use local Maphub" setting. (The setting only
+		// still applies to non-bundled / view-only types.)
+		// Generators whose bundled local build renders + imports correctly are
+		// forced local (same-origin) so the canvas/geometry is capturable — the
+		// external Watabou pages can't be embedded in this sandboxed cross-origin
+		// iframe (City renders blank, Village spins the CPU). Dwelling is handled
+		// via its own raw bundle path below.
+		const LOCAL_ONLY_TYPES = new Set(["dungeon", "realm", "cave", "mfcg", "village", "dwellings"]);
+		const localOnly = LOCAL_ONLY_TYPES.has(this._mapType);
+		const useLocal = localOnly || game.settings.get(MODULE_ID, "settlement.useLocalMaphub");
 		if (!useLocal) {
 			console.log(`${MODULE_ID} | MaphubViewerApp: using external URL ${ext}`);
 			return ext;
@@ -1270,8 +1485,12 @@ export class MaphubViewerApp extends ApplicationV2 {
 		// a <base> tag so scripts/assets still resolve and the parent window can
 		// inspect/capture the generator.
 		const BASE = `modules/${MODULE_ID}/scripts/maphub`;
-		const localBase = `${window.location.origin}/${BASE}/to/${this._mapType}/index.html`;
-		const localBaseDir = `${window.location.origin}/${BASE}/to/${this._mapType}/`;
+		// City/Village/Dwelling use the RAW Watabou builds (to/<type>-raw/) — the
+		// bundled voluminor/maphub fork builds never draw to the canvas.
+		const RAW_BUNDLE_DIRS = { dwellings: "dwellings-raw", mfcg: "mfcg-raw", village: "village-raw" };
+		const bundleDir = RAW_BUNDLE_DIRS[this._mapType] ?? this._mapType;
+		const localBase = `${window.location.origin}/${BASE}/to/${bundleDir}/index.html`;
+		const localBaseDir = `${window.location.origin}/${BASE}/to/${bundleDir}/`;
 		const localParams = this._queryString ? `cb=${Date.now()}&${this._queryString}` : `cb=${Date.now()}`;
 		const localUrl = `${localBase}?${localParams}`;
 
@@ -1301,9 +1520,10 @@ export class MaphubViewerApp extends ApplicationV2 {
 			}
 		} catch (_) { /* network error → fall through */ }
 
-		if (this._mapType === "dungeon") {
-			console.error(`${MODULE_ID} | MaphubViewerApp: bundled One Page Dungeon files are missing; refusing external fallback because exports would download instead of saving inside Foundry.`);
-			ui.notifications?.error("Bundled One Page Dungeon files are missing; cannot import dungeon internally.");
+		if (localOnly) {
+			const label = this._getMapLabel();
+			console.error(`${MODULE_ID} | MaphubViewerApp: bundled ${label} generator files are missing; refusing external fallback because the external page can't be captured for import.`);
+			ui.notifications?.error(`Bundled ${label} generator files are missing; cannot import internally.`);
 			return null;
 		}
 

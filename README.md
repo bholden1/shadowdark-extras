@@ -368,6 +368,7 @@ This module is provided under the MIT License.
 - All fonts licences included in the fonts folders
 - Dungeon Mapper and Hexmapper inspired by Hexlands and Instant Dungeons (agnostic procedural dungeon and hex crawling map generators for foundry) by [The Augur](https://www.patreon.com/cw/TheAugur)
 - Hexroll [website](https://hexroll.app/)  data has been used to generate hexes data. Some data has been simplified in order to be adapted to SDX and some other data has been created from scratch.
+- Map Generators (Realm, City, Village, Cave/Glade, Dungeon, Dwelling) are created by **Watabou** — [itch.io](https://watabou.itch.io/) · [Patreon](https://www.patreon.com/cw/watawatabou). Please support his work. The Medieval Fantasy City Generator is open source ([TownGeneratorOS](https://github.com/watabou/TownGeneratorOS), GPL-3.0).
 
 ---
 

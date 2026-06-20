@@ -40,6 +40,11 @@ export class MaphubLauncherApp extends HandlebarsApplicationMixin(ApplicationV2)
 
         const html = this.element;
 
+        html.querySelector("[data-action='open-realm']")?.addEventListener("click", async (e) => {
+            e.preventDefault();
+            this._openGenerator("realm");
+        });
+
         html.querySelector("[data-action='open-mfcg']")?.addEventListener("click", async (e) => {
             e.preventDefault();
             this._openGenerator("mfcg");
@@ -71,6 +76,7 @@ export class MaphubLauncherApp extends HandlebarsApplicationMixin(ApplicationV2)
 
         let externalBase = "";
         switch (generatorType) {
+            case "realm": externalBase = "https://watabou.github.io/perilous-shores/"; break;
             case "mfcg": externalBase = "https://watabou.github.io/city-generator/"; break;
             case "village": externalBase = "https://watabou.github.io/village-generator/"; break;
             case "dwellings": externalBase = "https://watabou.github.io/dwellings/"; break;
