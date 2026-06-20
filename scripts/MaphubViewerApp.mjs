@@ -787,29 +787,25 @@ export class MaphubViewerApp extends ApplicationV2 {
 		if (!view || !Array.isArray(floors) || !floors.length || typeof view.setFloor !== "function") return false;
 
 		try {
-			const n = floors.length;
-			ui.notifications.info(`Importing ${n}-floor dwelling…`);
-			// NOTE: do NOT call _dismissGeneratorContextMenu — its corner click lands on
-				// the dwelling generator's menu button and OPENS the menu.
+			const LH = 10; // ft per level
+				const ordinal = (k) => { const v = k % 100, sfx = (v >= 11 && v <= 13) ? "th" : (["th","st","nd","rd"][k % 10] || "th"); return `${k}${sfx}`; };
+				// Levels to import, bottom -> top: basement (if any), ground, then upper floors.
+				const units = [];
+				if (view.house.basement) units.push({ floor: view.house.basement, setIdx: -1, name: "Basement", isGround: false });
+				floors.forEach((f, i) => units.push({ floor: f, setIdx: i, name: i === 0 ? "Ground Floor" : `${ordinal(i)} Floor`, isGround: i === 0 }));
+				const baseIdx = view.house.basement ? 1 : 0; // index of the ground floor within units
+				units.forEach((u, k) => { u.bottom = (k - baseIdx) * LH; u.top = u.bottom + LH; });
+				ui.notifications.info(`Importing dwelling — ${units.length} level${units.length === 1 ? "" : "s"}…`);
 
-				// The walls/regions are placed from pure grid-cell math (deterministic, and
-				// already correct). Place the IMAGE to match them WITHOUT the generator's
-				// render transform — that transform animates on every setFloor, and reading
-				// it mid-animation is what shoved earlier images into a corner. Instead,
-				// capture each floor, detect the building's pixel bounds in the screenshot,
-				// and stretch that to fill the scene. This is self-normalizing: the image
-				// can't land off-centre, and floors stack regardless of the capture zoom.
-				const caps = [];
-				for (let i = 0; i < n; i++) {
-					// Capture this floor + the render transform FROM THE SAME FRAME. setFloor
-					// animates the fit and the WebGL buffer can go blank once it settles, so
-					// retry (re-triggering each time) until we grab a non-blank frame. Reading
-					// the transform and the pixels back-to-back (no await between) guarantees
-					// they describe the same frame — so the warp below lines the image up with
-					// the walls regardless of where in the animation we caught it.
+				// 1. Capture each level + its render transform FROM THE SAME FRAME. setFloor
+				// animates the fit and the WebGL buffer can go blank once it settles, so retry
+				// (re-triggering each time) until a non-blank frame; reading transform + pixels
+				// back-to-back (no await between) keeps them on the same frame so the warp lines
+				// the image up with the walls regardless of the animation state.
+				for (const u of units) {
 					let M = null, off = null;
 					for (let attempt = 0; attempt < 8 && !off; attempt++) {
-						view.setFloor(i);
+						view.setFloor(u.setIdx);
 						this._setDwellUiVisible(view, false);
 						await new Promise(r => setTimeout(r, attempt === 0 ? 700 : 220));
 						const m = view.map.__getRenderTransform();
@@ -819,39 +815,32 @@ export class MaphubViewerApp extends ApplicationV2 {
 						if (b && b.w > 20 && b.h > 20) { M = { a: m.a, b: m.b, c: m.c, d: m.d, tx: m.tx, ty: m.ty }; off = cap; }
 					}
 					if (!off) return false;
-					caps.push({ M, off, floor: floors[i] });
+					u.M = M; u.off = off;
 				}
 
-				// 2. Shared building grid from the floor geometry (contour + rooms) in node
-				// coords (x = node.j, y = node.i), plus a fixed roof/outer-wall margin. The
-				// frame is shared by ALL floors, so they stack.
+				// 2. Shared building grid from every level's geometry (contour + rooms), node
+				// coords (x = node.j, y = node.i), plus a fixed roof/outer-wall margin. Shared
+				// by ALL levels so they stack.
 				let cmi = Infinity, cmj = Infinity, cMi = -Infinity, cMj = -Infinity;
 				const accNode = (edges) => { for (const e of (edges || [])) for (const nd of [e?.a, e?.b]) { if (!nd) continue; cmi = Math.min(cmi, nd.i); cMi = Math.max(cMi, nd.i); cmj = Math.min(cmj, nd.j); cMj = Math.max(cMj, nd.j); } };
-				for (const c of caps) { accNode(c.floor.contour); for (const rm of (c.floor.rooms || [])) accNode(rm.contour); }
+				for (const u of units) { accNode(u.floor.contour); for (const rm of (u.floor.rooms || [])) accNode(rm.contour); }
 				if (!Number.isFinite(cmi)) return false;
-				const ROOF = 2; // roof/outer-wall margin beyond the floor contour, in cells
+				const ROOF = 2;
 				const mi = Math.floor(cmi - ROOF), mj = Math.floor(cmj - ROOF), Mi = Math.ceil(cMi + ROOF), Mj = Math.ceil(cMj + ROOF);
 				const cellsW = Math.max(1, Mj - mj), cellsH = Math.max(1, Mi - mi);
-				// Cell size: scale the captured cell (M.a px/cell) up ~1.8x for a usable map.
-				const gridPx = Math.max(60, Math.min(160, Math.round(caps[0].M.a * 1.8)));
+				const gridPx = Math.max(60, Math.min(160, Math.round(units[baseIdx].M.a * 1.8)));
 				const sceneW = Math.round(cellsW * gridPx);
 				const sceneH = Math.round(cellsH * gridPx);
 				const nodeToScene = (j, i) => ({ x: Math.round((j - mj) * gridPx), y: Math.round((i - mi) * gridPx) });
 
-				// 2b. Warp each floor's capture into the shared grid so building-cell (j,i)
-				// lands at nodeToScene(j,i) — exactly where the walls go. The warped image is
-				// scene-sized; it becomes the Level background below (fit:"fill" = 1:1).
-				for (const c of caps) {
-					c.bg = await this._warpFloorImage(c.off, c.M, mj, mi, Mj, Mi, sceneW, sceneH);
-					if (!c.bg) return false;
+				// 2b. Warp each level's capture into the shared grid (cell (j,i) -> nodeToScene).
+				for (const u of units) {
+					u.bg = await this._warpFloorImage(u.off, u.M, mj, mi, Mj, Mi, sceneW, sceneH);
+					if (!u.bg) return false;
 				}
 
-				// 3. Scene with one elevation Level per floor, each carrying its OWN background
-				// image (floor 0 = bottom, ascending). The level background uses fit:"fill" +
-				// centre anchor, so Foundry fills/centres the image in the scene rect itself —
-				// no tile, no placement math, no padding offset (which is exactly what put
-				// earlier images in a corner). One scene, many floors.
-				const LH = 10; // ft per floor
+				// 3. Scene with a named elevation Level per unit, each its OWN background image
+				// (fit:"fill" — Foundry fills/centres it in the scene rect). One scene, many levels.
 				const sceneName = `${this._getMapLabel()} ${new Date().toLocaleString()}`;
 				const levelBg = (src) => ({ src, color: "#000000", tint: "#ffffff", alphaThreshold: 0 });
 				const fillTex = { anchorX: 0.5, anchorY: 0.5, offsetX: 0, offsetY: 0, fit: "fill", scaleX: 1, scaleY: 1, rotation: 0 };
@@ -859,58 +848,50 @@ export class MaphubViewerApp extends ApplicationV2 {
 					name: sceneName, width: sceneW, height: sceneH,
 					grid: { size: gridPx }, padding: 0, backgroundColor: "#000000",
 					fogExploration: true, tokenVision: true,
-					background: { src: caps[0].bg },
-					levels: caps.map((c, i) => ({
-						name: `Floor ${i + 1}`,
-						elevation: { bottom: i * LH, top: (i + 1) * LH },
-						background: levelBg(c.bg),
-						textures: fillTex,
-					})),
+					background: { src: units[baseIdx].bg },
+					levels: units.map(u => ({ name: u.name, elevation: { bottom: u.bottom, top: u.top }, background: levelBg(u.bg), textures: fillTex })),
 				};
 				const scene = await Scene.create(sceneData);
 				await scene.activate();
-				const levelFor = (i) => scene.levels.find(l => (l.elevation?.bottom ?? null) === i * LH) ?? scene.levels.contents[i];
+				units.forEach((u, k) => { u.level = scene.levels.find(l => (l.elevation?.bottom ?? null) === u.bottom) ?? scene.levels.contents[k]; });
 
-				// 4. Per-floor walls, scoped to that Level.
+				// 4. Per-level walls (with doors). Entrance door only on the ground floor.
 				let wallTotal = 0;
-				for (let i = 0; i < n; i++) {
-					const lvl = levelFor(i);
-					const walls = this._buildDwellWalls(caps[i].floor, nodeToScene, { id: lvl.id, bottom: i * LH, top: (i + 1) * LH });
+				for (const u of units) {
+					const walls = this._buildDwellWalls(u.floor, nodeToScene, { id: u.level.id, bottom: u.bottom, top: u.top, isGround: u.isGround });
 					if (walls.length) { await scene.createEmbeddedDocuments("Wall", walls); wallTotal += walls.length; }
 				}
 
-			// 6. Stairs as changeLevel Regions. The generator's per-stair floor
-				// connectivity is unreliable (some stair lists are empty; a stair's `to`
-				// can point at the basement, which isn't in house.floors). A staircase is
-				// a VERTICAL shaft at one building cell, so collect every known stairwell
-				// cell and bridge each ADJACENT floor pair there.
-				const stairCells = new Map();
-				for (const c of caps) for (const s of (c.floor?.stairs || [])) {
-					if (s?.cell && typeof s.cell.i === "number") stairCells.set(`${s.cell.i},${s.cell.j}`, { i: s.cell.i, j: s.cell.j });
-				}
-				try {
-					for (const s of (view.house?.basement?.stairs || [])) {
-						if (s?.cell && typeof s.cell.i === "number") stairCells.set(`${s.cell.i},${s.cell.j}`, { i: s.cell.i, j: s.cell.j });
-					}
-				} catch (_) { }
-				const regions = [];
-				for (const cell of stairCells.values()) {
-					const cc = nodeToScene(cell.j + 0.5, cell.i + 0.5);
-					for (let i = 0; i < n - 1; i++) {
-						regions.push({
-							name: `Stairs F${i + 1}-F${i + 2}`,
+				// 5. Stairs as changeLevel Regions, using the generator's OWN connectivity:
+				// each stair knows its cell and the floor it connects to (s.to.plan). A cell
+				// with both up- and down-stairs yields two regions (one per pair). Dedupe by
+				// cell + the level pair it bridges.
+				const floorToUnit = new Map(units.map(u => [u.floor, u]));
+				const regionByKey = new Map();
+				for (const u of units) {
+					for (const s of (u.floor.stairs || [])) {
+						if (!s?.cell || typeof s.cell.i !== "number") continue;
+						const other = s.to?.plan ? floorToUnit.get(s.to.plan) : null;
+						if (!other || other === u) continue;
+						const lo = u.bottom <= other.bottom ? u : other, hi = u.bottom <= other.bottom ? other : u;
+						const key = `${s.cell.i},${s.cell.j}|${lo.bottom}|${hi.bottom}`;
+						if (regionByKey.has(key)) continue;
+						const cc = nodeToScene(s.cell.j + 0.5, s.cell.i + 0.5);
+						regionByKey.set(key, {
+							name: `Stairs: ${lo.name} ↔ ${hi.name}`,
 							color: "#28c9cc",
 							shapes: [{ type: "rectangle", x: cc.x - gridPx / 2, y: cc.y - gridPx / 2, width: gridPx, height: gridPx, hole: false }],
-							elevation: { bottom: i * LH, top: (i + 1) * LH + 5, topInclusive: false },
-							levels: [levelFor(i).id, levelFor(i + 1).id],
+							elevation: { bottom: lo.bottom, top: hi.top, topInclusive: false },
+							levels: [lo.level.id, hi.level.id],
 							visibility: 1, locked: false,
 							behaviors: [{ name: "Change Level", type: "changeLevel", system: { movementActions: [] } }],
 						});
 					}
 				}
+				const regions = [...regionByKey.values()];
 				if (regions.length) await scene.createEmbeddedDocuments("Region", regions);
 
-			ui.notifications.info(`Imported ${scene.name} — ${n} floors, ${wallTotal} walls, ${regions.length} stairs.`);
+				ui.notifications.info(`Imported ${scene.name} — ${units.length} levels, ${wallTotal} walls, ${regions.length} stairs.`);
 			this.close();
 			return true;
 		} catch (err) {
@@ -925,20 +906,57 @@ export class MaphubViewerApp extends ApplicationV2 {
 
 	/** Build wall docs for one dwelling floor (outer contour + room contours), scoped to a Level. */
 	_buildDwellWalls(floor, nodeToScene, levelCtx) {
+		// Node-edge key, endpoint-order independent — lets us match door edges (from
+		// room.doors) against the contour/room-outline edges we turn into walls.
+		const ek = (a, b) => {
+			const p = [[a.i, a.j], [b.i, b.j]].sort((u, v) => u[0] - v[0] || u[1] - v[1]);
+			return `${p[0][0]},${p[0][1]}|${p[1][0]},${p[1][1]}`;
+		};
+		// Door edges by type. REGULAR = a real door; DOORWAY/NULL = an open passage.
+		const doorType = new Map();
+		for (const rm of (floor.rooms || [])) {
+			let list = [];
+			try { const it = rm.doors?.iterator?.(); if (it) { while (it.hasNext()) list.push(it.next()); } else if (Array.isArray(rm.doors)) list = rm.doors; } catch (_) { }
+			for (const d of list) {
+				const e = d?.edge1; if (!e?.a || !e?.b) continue;
+				const t = (d.type?.name || d.type?._hx_name || "").toUpperCase();
+				doorType.set(ek(e.a, e.b), t || "NULL");
+			}
+		}
+		// Building entrance: a door in the outer wall at the landing cell, on the
+		// door's facing side (cell (i,j) edge in the dir's (di,dj) direction). Only the
+		// ground floor has the real front door.
+		try {
+			const L = levelCtx.isGround ? floor.entrance?.landing : null;
+			if (L && typeof L.i === "number") {
+				// The entrance edge is whichever of the landing cell's four edges lies on
+				// the outer contour (robust — no reliance on the door's direction enum).
+				const contourKeys = new Set();
+				for (const e of (floor.contour || [])) if (e?.a && e?.b) contourKeys.add(ek(e.a, e.b));
+				const cand = [
+					[{ i: L.i, j: L.j }, { i: L.i, j: L.j + 1 }],
+					[{ i: L.i + 1, j: L.j }, { i: L.i + 1, j: L.j + 1 }],
+					[{ i: L.i, j: L.j }, { i: L.i + 1, j: L.j }],
+					[{ i: L.i, j: L.j + 1 }, { i: L.i + 1, j: L.j + 1 }],
+				];
+				for (const [a, b] of cand) { const k = ek(a, b); if (contourKeys.has(k)) { doorType.set(k, "REGULAR"); break; } }
+			}
+		} catch (_) { }
+
 		const walls = [];
 		const used = new Set();
 		const add = (a, b) => {
 			if (!a || !b) return;
+			const nk = ek(a, b);
+			if (used.has(nk)) return;
+			used.add(nk);
+			const dt = doorType.get(nk);
+			if (dt === "DOORWAY" || dt === "NULL") return; // open passage — leave a gap
 			const A = nodeToScene(a.j, a.i), B = nodeToScene(b.j, b.i);
 			if (A.x === B.x && A.y === B.y) return;
-			const k = [[A.x, A.y], [B.x, B.y]].sort((p, q) => p[0] - q[0] || p[1] - q[1]).map(p => p.join(",")).join("|");
-			if (used.has(k)) return;
-			used.add(k);
-			walls.push({
-				c: [A.x, A.y, B.x, B.y],
-				levels: [levelCtx.id],
-				flags: { "wall-height": { bottom: levelCtx.bottom, top: levelCtx.top } },
-			});
+			const w = { c: [A.x, A.y, B.x, B.y], levels: [levelCtx.id], flags: { "wall-height": { bottom: levelCtx.bottom, top: levelCtx.top } } };
+			if (dt === "REGULAR") { w.door = 1; w.ds = 0; } // closed, openable door
+			walls.push(w);
 		};
 		for (const e of (floor.contour || [])) add(e?.a, e?.b);
 		for (const rm of (floor.rooms || [])) for (const e of (rm.contour || [])) add(e?.a, e?.b);
