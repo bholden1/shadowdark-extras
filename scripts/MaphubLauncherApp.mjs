@@ -59,6 +59,11 @@ export class MaphubLauncherApp extends HandlebarsApplicationMixin(ApplicationV2)
             e.preventDefault();
             this._openGenerator("cave");
         });
+
+        html.querySelector("[data-action='open-dungeon']")?.addEventListener("click", async (e) => {
+            e.preventDefault();
+            this._openGenerator("dungeon");
+        });
     }
 
     async _openGenerator(generatorType) {
@@ -70,6 +75,7 @@ export class MaphubLauncherApp extends HandlebarsApplicationMixin(ApplicationV2)
             case "village": externalBase = "https://watabou.github.io/village-generator/"; break;
             case "dwellings": externalBase = "https://watabou.github.io/dwellings/"; break;
             case "cave": externalBase = "https://watabou.github.io/cave-generator/"; break;
+            case "dungeon": externalBase = "https://watabou.github.io/one-page-dungeon/"; break;
         }
 
         new MaphubViewerApp({
