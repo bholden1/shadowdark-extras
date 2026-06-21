@@ -889,14 +889,27 @@ export class MaphubViewerApp extends ApplicationV2 {
 					const other = s?.to?.plan ? floorToUnit.get(s.to.plan) : null;
 					if (other) addStairRegion(s.cell, u, other);
 				}
-				// Spiral tower: one shared shaft (house.spiral.landing) that connects every
-				// adjacent above-ground floor — it REPLACES per-floor stairs, so floor.stairs
-				// is empty for spiral houses. Add a region at the landing for each pair.
+				// Spiral tower: one shared shaft connecting every above-ground floor at a single
+				// cell. A MIDDLE floor can go both up AND down from it, which the default
+				// changeLevel region can't express cleanly (stacked regions = duelling
+				// prompts). Use ONE region spanning all the spiral's levels with a custom
+				// up/down chooser (executeScript) instead.
 				try {
 					const sp = (view.house.floors || []).map(f => f?.spiral).find(Boolean)?.landing;
-					if (sp && typeof sp.i === "number") {
-						const fu = units.filter(u => u.setIdx >= 0).sort((a, b) => a.bottom - b.bottom);
-						for (let k = 0; k < fu.length - 1; k++) addStairRegion(sp, fu[k], fu[k + 1]);
+					const fu = units.filter(u => u.setIdx >= 0).sort((a, b) => a.bottom - b.bottom);
+					if (sp && typeof sp.i === "number" && fu.length >= 2) {
+						const conn = fu.map(u => ({ name: u.name, bottom: u.bottom }));
+						const cc = nodeToScene(sp.j + 0.5, sp.i + 0.5);
+						regionByKey.set(`spiral|${sp.i},${sp.j}`, {
+							name: "Spiral Staircase",
+							color: "#28c9cc",
+							shapes: [{ type: "rectangle", x: cc.x - gridPx / 2, y: cc.y - gridPx / 2, width: gridPx, height: gridPx, hole: false }],
+							elevation: { bottom: fu[0].bottom, top: fu[fu.length - 1].top, topInclusive: false },
+							levels: fu.map(u => u.level.id),
+							visibility: 1, locked: false,
+							flags: { [MODULE_ID]: { spiral: conn } },
+							behaviors: [{ name: "Spiral Up/Down", type: "executeScript", system: { events: ["tokenMoveIn"], source: this._spiralRegionScript() } }],
+						});
 					}
 				} catch (_) { }
 				const regions = [...regionByKey.values()];
@@ -913,6 +926,34 @@ export class MaphubViewerApp extends ApplicationV2 {
 			// Restore the generator's UI so it stays usable if the window is open.
 			this._setDwellUiVisible(view, true);
 		}
+	}
+
+	/**
+	 * Source for the spiral-staircase region behavior (executeScript, tokenMoveIn).
+	 * On entry it reads the connected level elevations from the region flags, finds
+	 * which are above/below the token, and prompts Up / Down / Stay — so a middle
+	 * floor (both directions from one shaft) gets a clean choice instead of duelling
+	 * default changeLevel prompts. executeScript scope: (scene, region, behavior, event).
+	 */
+	_spiralRegionScript() {
+		return [
+			'const t = event?.data?.token; if (!t) return;',
+			'const conn = region?.flags?.["shadowdark-extras"]?.spiral;',
+			'if (!Array.isArray(conn) || conn.length < 2) return;',
+			'const cur = t.elevation ?? 0;',
+			'const up = conn.filter(c => c.bottom > cur + 0.5).sort((a,b)=>a.bottom-b.bottom)[0];',
+			'const down = conn.filter(c => c.bottom < cur - 0.5).sort((a,b)=>b.bottom-a.bottom)[0];',
+			'if (!up && !down) return;',
+			'const D = foundry.applications.api.DialogV2;',
+			'const btns = [];',
+			'if (up) btns.push({ action:"up", label:"Up to " + up.name, default: !down });',
+			'if (down) btns.push({ action:"down", label:"Down to " + down.name, default: !up });',
+			'btns.push({ action:"stay", label:"Stay" });',
+			'let pick = "stay";',
+			'try { pick = await D.wait({ window:{ title:"Spiral Staircase" }, content:"<p>Take the spiral staircase?</p>", buttons: btns, modal: true }); } catch (e) { pick = "stay"; }',
+			'if (pick === "up" && up) await t.update({ elevation: up.bottom });',
+			'else if (pick === "down" && down) await t.update({ elevation: down.bottom });',
+		].join("\n");
 	}
 
 	/** Build wall docs for one dwelling floor (outer contour + room contours), scoped to a Level. */
