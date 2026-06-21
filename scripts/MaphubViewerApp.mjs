@@ -995,6 +995,38 @@ export class MaphubViewerApp extends ApplicationV2 {
 			}
 		} catch (_) { }
 
+		// Spiral tower: enclose the round tower (the cells just outside the building
+		// around the spiral's corner) and OPEN the contour edges between it and the
+		// landing, so the shaft is a walled alcove you can step into. The corner node
+		// is shared by the spiral's entrance + exit edges; tower cells are the cells
+		// around it that aren't part of the floor.
+		const skip = new Set();    // contour edges to leave OPEN (building <-> tower)
+		const towerWallEdges = [];  // extra walls enclosing the tower's outer side
+		try {
+			const sp = floor.spiral;
+			if (sp?.entrance && sp?.exit && Array.isArray(floor.area)) {
+				const C = [sp.entrance.a, sp.entrance.b].find(n1 => [sp.exit.a, sp.exit.b].some(n2 => n2 && n1 && n2.i === n1.i && n2.j === n1.j));
+				if (C) {
+					const around = [[C.i - 1, C.j - 1], [C.i - 1, C.j], [C.i, C.j - 1], [C.i, C.j]];
+					const areaSet = new Set(floor.area.map(c => `${c.i},${c.j}`));
+					const tower = around.filter(([i, j]) => !areaSet.has(`${i},${j}`));
+					const towerSet = new Set(tower.map(([i, j]) => `${i},${j}`));
+					for (const [ti, tj] of tower) {
+						const sides = [
+							[{ i: ti, j: tj }, { i: ti, j: tj + 1 }, ti - 1, tj],         // N
+							[{ i: ti + 1, j: tj }, { i: ti + 1, j: tj + 1 }, ti + 1, tj], // S
+							[{ i: ti, j: tj }, { i: ti + 1, j: tj }, ti, tj - 1],         // W
+							[{ i: ti, j: tj + 1 }, { i: ti + 1, j: tj + 1 }, ti, tj + 1], // E
+						];
+						for (const [a, b, ni, nj] of sides) {
+							if (areaSet.has(`${ni},${nj}`)) skip.add(ek(a, b));               // open building <-> tower
+							else if (!towerSet.has(`${ni},${nj}`)) towerWallEdges.push([a, b]); // tower outer wall
+						}
+					}
+				}
+			}
+		} catch (_) { }
+
 		const walls = [];
 		const used = new Set();
 		const add = (a, b) => {
@@ -1002,6 +1034,7 @@ export class MaphubViewerApp extends ApplicationV2 {
 			const nk = ek(a, b);
 			if (used.has(nk)) return;
 			used.add(nk);
+			if (skip.has(nk)) return; // open connection (e.g. building <-> spiral tower)
 			const dt = doorType.get(nk);
 			if (dt === "DOORWAY" || dt === "NULL") return; // open passage — leave a gap
 			const A = nodeToScene(a.j, a.i), B = nodeToScene(b.j, b.i);
@@ -1012,6 +1045,7 @@ export class MaphubViewerApp extends ApplicationV2 {
 		};
 		for (const e of (floor.contour || [])) add(e?.a, e?.b);
 		for (const rm of (floor.rooms || [])) for (const e of (rm.contour || [])) add(e?.a, e?.b);
+		for (const [a, b] of towerWallEdges) add(a, b); // enclose the spiral tower
 		return walls;
 	}
 
