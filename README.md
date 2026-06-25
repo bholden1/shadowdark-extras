@@ -20,7 +20,7 @@ A comprehensive enhancement module for [Shadowdark RPG](https://www.thearcanelib
 ## 📦 Installation
 
 1. In Foundry VTT, go to **Add-on Modules** → **Install Module**
-2. Paste the manifest URL: `https://github.com/gmdima/shadowdark-extras/releases/latest/download/module.json`
+2. Paste the manifest URL: `https://github.com/DimitroffVodka/shadowdark-extras/releases/latest/download/module.json`
 3. Click **Install**
 4. Enable the module in your world's module settings
 
