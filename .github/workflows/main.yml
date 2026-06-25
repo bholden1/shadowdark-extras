@@ -41,9 +41,24 @@ jobs:
       - name: Build Compendium Packs From YAML Source
         run: npm run pack
 
+      - name: Verify Packs Are Non-Empty
+        # Guard against shipping a release with empty/corrupt compendiums
+        # (every declared pack must have compiled LevelDB data, i.e. a .ldb file).
+        run: |
+          fail=0
+          for path in $(node -e "JSON.parse(require('fs').readFileSync('module.json','utf8')).packs.forEach(p=>console.log(p.path))"); do
+            if ! ls "$path"/*.ldb >/dev/null 2>&1; then
+              echo "::error::Pack '$path' has no compiled .ldb data — refusing to ship empty compendium."
+              fail=1
+            else
+              echo "OK: $path"
+            fi
+          done
+          [ "$fail" = "0" ]
+
       - name: Create Module Archive
         run: |
-          zip -r module.zip module.json README.md LICENSE data/ i18n/ scripts/ styles/ templates/ packs/ assets/ art/ libs/
+          zip -r module.zip module.json README.md LICENSE data/ i18n/ scripts/ styles/ templates/ packs/ assets/ art/ libs/ greensock/
 
       - name: Update Release With Files
         id: create_version_release
