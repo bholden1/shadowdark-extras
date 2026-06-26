@@ -1,74 +1,104 @@
-name: Create Module Files For GitHub Release
+name: Build & Publish Release
 
-env:
-  project_url: 'https://github.com/${{github.repository}}' 
-  latest_manifest_url: 'https://github.com/${{github.repository}}/releases/latest/download/module.json'
-  release_system_url: 'https://github.com/${{github.repository}}/releases/download/${{github.event.release.tag_name}}/module.zip'
+# Builds module.zip from source, runs the release-integrity gate, and attaches
+# the verified module.json + module.zip to the release.
+#
+# Triggers (any of):
+#   - pushing a version tag    git tag v6.10.42 && git push origin v6.10.42   (recommended)
+#   - publishing a GitHub Release (the old flow — still works)
+#   - manual run from the Actions tab (workflow_dispatch); leave dry_run on to
+#     build + verify WITHOUT publishing (use this to confirm CI works).
+#
+# NOTE: on a forked repo, GitHub disables Actions until you enable them once in
+# the repo's Actions tab. If runs never appear, that's the cause.
 
 on:
+  push:
+    tags:
+      - 'v*.*.*'
   release:
     types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Version tag to build (blank = build default branch as a dry run)'
+        required: false
+      dry_run:
+        description: 'Build & verify only — do not publish'
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
-
     steps:
-      - name: Checkout Repository
+      - name: Checkout
         uses: actions/checkout@v4
-
-      - name: Modify System Manifest With Release-Specific Values
-        id: sub_manifest_link_version
-        uses: cschleiden/replace-tokens@v1
         with:
-          files: 'module.json'
-        env:
-          VERSION: ${{github.event.release.tag_name}}
-          URL: ${{ env.project_url }}
-          MANIFEST: ${{ env.latest_manifest_url }}
-          DOWNLOAD: ${{ env.release_system_url }}
+          ref: ${{ github.event.release.tag_name || inputs.tag || github.ref_name }}
+
+      - name: Resolve tag & version
+        id: ver
+        run: |
+          TAG="${{ github.event.release.tag_name || inputs.tag || github.ref_name }}"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
 
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
           node-version: '20'
 
-      - name: Install Dev Dependencies
+      - name: Install dependencies
         run: npm ci
 
-      - name: Build Compendium Packs From YAML Source
+      - name: Verify module.json version matches the tag
+        # Skipped on dry runs (which build a branch, not a version tag).
+        if: ${{ inputs.dry_run != true }}
+        run: |
+          MJ=$(node -p "require('./module.json').version")
+          if [ "$MJ" != "${{ steps.ver.outputs.version }}" ]; then
+            echo "::error::module.json version ($MJ) != tag ${{ steps.ver.outputs.tag }}. Bump module.json AND package.json to ${{ steps.ver.outputs.version }} before tagging."
+            exit 1
+          fi
+          echo "module.json version $MJ matches tag ${{ steps.ver.outputs.tag }}."
+
+      - name: Build compendium packs from YAML source
         run: npm run pack
 
-      - name: Verify Packs Are Non-Empty
-        # Guard against shipping a release with empty/corrupt compendiums
-        # (every declared pack must have compiled LevelDB data, i.e. a .ldb file).
-        run: |
-          fail=0
-          for path in $(node -e "JSON.parse(require('fs').readFileSync('module.json','utf8')).packs.forEach(p=>console.log(p.path))"); do
-            if ! ls "$path"/*.ldb >/dev/null 2>&1; then
-              echo "::error::Pack '$path' has no compiled .ldb data — refusing to ship empty compendium."
-              fail=1
-            else
-              echo "OK: $path"
-            fi
-          done
-          [ "$fail" = "0" ]
+      - name: Release-integrity gate (packs non-empty, all declared files present, versions aligned)
+        run: npm run release:check
 
-      - name: Create Module Archive
+      - name: Create module archive
         run: |
           zip -r module.zip module.json README.md LICENSE data/ i18n/ scripts/ styles/ templates/ packs/ assets/ art/ libs/ greensock/
 
-      - name: Update Release With Files
-        id: create_version_release
+      - name: Verify archive contents
+        run: |
+          fail=0
+          for path in $(node -e "JSON.parse(require('fs').readFileSync('module.json','utf8')).packs.forEach(p=>console.log(p.path))"); do
+            if unzip -l module.zip "$path/*.ldb" 2>/dev/null | grep -q '\.ldb'; then
+              echo "OK: $path"
+            else
+              echo "::error::archive is missing compiled data for pack: $path"; fail=1
+            fi
+          done
+          if ! unzip -l module.zip 'greensock/dist/gsap.min.js' 2>/dev/null | grep -q 'gsap.min.js'; then
+            echo "::error::archive is missing greensock/dist/gsap.min.js"; fail=1
+          fi
+          [ "$fail" = "0" ]
+
+      - name: Publish artifacts to the release
+        if: ${{ inputs.dry_run != true }}
         uses: ncipollo/release-action@v1
         with:
           allowUpdates: true
-          name: ${{ github.event.release.name }}
-          draft: false
-          prerelease: ${{ github.event.release.prerelease }}
-          token: ${{ secrets.GITHUB_TOKEN }}
+          omitNameDuringUpdate: true
+          omitBodyDuringUpdate: true
+          tag: ${{ steps.ver.outputs.tag }}
+          name: ${{ steps.ver.outputs.tag }}
           artifacts: './module.json, ./module.zip'
-          tag: ${{github.event.release.tag_name}}
-          body: ${{github.event.release.body}}
+          token: ${{ secrets.GITHUB_TOKEN }}

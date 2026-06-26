@@ -7,7 +7,8 @@
     "verify": "bash verify.sh",
     "verify:strict": "bash verify.sh --strict",
     "pack": "node ./dev/packs/pack.mjs",
-    "unpack": "node ./dev/packs/unpack.mjs"
+    "unpack": "node ./dev/packs/unpack.mjs",
+    "release:check": "node ./dev/release-check.mjs"
   },
   "devDependencies": {
     "@foundryvtt/foundryvtt-cli": "^1.0.4"
